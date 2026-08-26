@@ -1,6 +1,6 @@
 import os
 from typing import Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import psycopg2
@@ -8,7 +8,23 @@ from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
 
-# Permite peticiones CORS globales
+# 1. Middleware Manual para forzar cabeceras CORS en todas las respuestas (incluyendo OPTIONS)
+@app.middleware("http")
+async def add_cors_header(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = Response()
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+# 2. Middleware nativo de FastAPI como respaldo
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
