@@ -7,17 +7,17 @@ interface Retailer {
   id: string;
   code: string;
   name: string;
-  base_url: string;
+  base_url?: string;
   is_active: boolean;
 }
 
 interface MonitoringConfig {
   id: string;
-  name: string;
-  retailer_id: string;
-  search_keyword: string;
-  frequency_hours: number;
-  is_active: boolean;
+  search_term: string;
+  name?: string;
+  retailer_id?: string;
+  frequency_hours?: number;
+  is_active?: boolean;
 }
 
 export default function Dashboard() {
@@ -42,7 +42,6 @@ export default function Dashboard() {
       setRetailers(dataRetailers);
       setConfigs(dataConfigs);
 
-      // Asignar el primer retailer como predeterminado en el select
       if (dataRetailers.length > 0 && !selectedRetailerId) {
         setSelectedRetailerId(dataRetailers[0].id);
       }
@@ -71,8 +70,8 @@ export default function Dashboard() {
 
   const createConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!keyword || !selectedRetailerId) {
-      alert("Por favor completa la palabra clave y selecciona un retailer.");
+    if (!keyword) {
+      alert("Por favor ingresa una palabra clave.");
       return;
     }
 
@@ -81,10 +80,7 @@ export default function Dashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: `Busqueda: ${keyword}`,
-          retailer_id: selectedRetailerId,
-          search_keyword: keyword,
-          frequency_hours: 6
+          search_term: keyword
         })
       });
 
@@ -188,8 +184,8 @@ export default function Dashboard() {
             {configs.map((cfg) => (
               <div key={cfg.id} className="bg-slate-900 p-4 rounded-lg flex justify-between items-center border border-slate-700/50">
                 <div>
-                  <p className="font-medium text-slate-200">{cfg.name}</p>
-                  <p className="text-xs text-slate-500">Frecuencia: cada {cfg.frequency_hours} horas</p>
+                  <p className="font-medium text-slate-200">{cfg.name || `Búsqueda: ${cfg.search_term}`}</p>
+                  <p className="text-xs text-slate-500">Frecuencia: cada {cfg.frequency_hours || 6} horas</p>
                 </div>
                 <span className="text-xs bg-emerald-500/10 text-emerald-400 px-3 py-1 rounded-full border border-emerald-500/20">
                   Activo
