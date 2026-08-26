@@ -57,7 +57,6 @@ def save_scraper_results(results: List[Any]) -> int:
     try:
         data_tuples = []
         for r in results:
-            # Mapeo exacto basado en el modelo ExtractedProductData de vtex_scraper
             name = (
                 parse_item_field(r, "title") or 
                 parse_item_field(r, "product_name") or 
@@ -108,46 +107,32 @@ def save_scraper_results(results: List[Any]) -> int:
 async def run_vtex_scraping(terms: List[str]) -> List[Any]:
     extracted = []
     
-    print(f"\n[LOG SCRAPER] 1. Términos a buscar recibidos: {terms}", flush=True)
+    print(f"\n[LOG SCRAPER] 1. Términos recibidos: {terms}", flush=True)
 
     try:
         scraper = VTEXScraper()
     except Exception as inst_err:
-        print(f"[LOG SCRAPER] ERROR al instanciar VTEXScraper: {inst_err}", flush=True)
+        print(f"[LOG SCRAPER] ERROR instanciando VTEXScraper: {inst_err}", flush=True)
         return []
 
-    # PASO 3: Log con el nombre del método explícito confirmado
-    METHOD_NAME = "scrape_keyword"
-    print(f"[LOG SCRAPER] Ejecutando extracción explícita vía método: VTEXScraper.{METHOD_NAME}()", flush=True)
+    METHOD_NAME = "search_keyword"
+    print(f"[LOG SCRAPER] Invocando método confirmado: VTEXScraper.{METHOD_NAME}()", flush=True)
 
     for term in terms:
         try:
-            # PASO 2: Llamada directa al método exacto de vtex_scraper
-            raw_res = scraper.scrape_keyword(term)
-
-            if inspect.isawaitable(raw_res):
-                res = await raw_res
-            else:
-                res = raw_res
+            # Llamada asíncrona explícita confirmada en el código fuente
+            res = await scraper.search_keyword(term)
 
             count = len(res) if isinstance(res, list) else 0
 
             if count > 0:
-                print(f"[LOG SCRAPER] 2. Término '{term}' vía '{METHOD_NAME}': devueltos {count} productos.", flush=True)
+                print(f"[LOG SCRAPER] 2. Término '{term}': devueltos {count} productos.", flush=True)
                 extracted.extend(res)
             else:
-                print(f"[LOG SCRAPER] 2. ALERTA: Término '{term}' vía '{METHOD_NAME}' devolvió 0 resultados. Tipo: {type(res)} | Raw: {res}", flush=True)
+                print(f"[LOG SCRAPER] 2. ALERTA: Término '{term}' devolvió 0 resultados.", flush=True)
 
         except Exception as err:
-            print(f"[LOG SCRAPER] 2. ERROR CAPTURADO buscando '{term}': {type(err).__name__} - {str(err)}", flush=True)
-
-    if hasattr(scraper, "close") and callable(getattr(scraper, "close")):
-        try:
-            close_res = scraper.close()
-            if inspect.isawaitable(close_res):
-                await close_res
-        except Exception:
-            pass
+            print(f"[LOG SCRAPER] 2. ERROR CAPTURADO en '{term}': {type(err).__name__} - {str(err)}", flush=True)
 
     return extracted
 
@@ -224,7 +209,7 @@ async def trigger_now():
     
     extracted_products = await run_vtex_scraping(terms)
 
-    print(f"\n[LOG TRIGGER] 3. Total elementos acumulados en extracted_products antes de save_scraper_results: {len(extracted_products)}", flush=True)
+    print(f"\n[LOG TRIGGER] 3. Total elementos acumulados antes de guardar: {len(extracted_products)}", flush=True)
 
     total_saved = save_scraper_results(extracted_products)
 
