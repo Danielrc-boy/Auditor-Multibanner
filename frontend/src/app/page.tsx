@@ -25,18 +25,29 @@ export default function Dashboard() {
   const [configs, setConfigs] = useState<MonitoringConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
+  const [selectedRetailerId, setSelectedRetailerId] = useState("");
+  
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
   const fetchData = async () => {
     try {
       const [resRetailers, resConfigs] = await Promise.all([
-        fetch(`${API_URL}/retailers/`),
-        fetch(`${API_URL}/configs/`)
+        fetch(`${API_URL}/retailers`),
+        fetch(`${API_URL}/configs`)
       ]);
-      setRetailers(await resRetailers.json());
-      setConfigs(await resConfigs.json());
+      
+      const dataRetailers: Retailer[] = await resRetailers.json();
+      const dataConfigs: MonitoringConfig[] = await resConfigs.json();
+
+      setRetailers(dataRetailers);
+      setConfigs(dataConfigs);
+
+      // Asignar el primer retailer como predeterminado en el select
+      if (dataRetailers.length > 0 && !selectedRetailerId) {
+        setSelectedRetailerId(dataRetailers[0].id);
+      }
     } catch (err) {
-      console.error("Error al conectar con el backend", err);
+      console.error("Error al conectar con el backend:", err);
     }
   };
 
@@ -47,9 +58,11 @@ export default function Dashboard() {
   const triggerMonitoring = async () => {
     setLoading(true);
     try {
-      await fetch(`${API_URL}/trigger-now`, { method: "POST" });
+      const res = await fetch(`${API_URL}/trigger-now`, { method: "POST" });
+      if (!res.ok) throw new Error("Fallo en la respuesta del servidor");
       alert("🚀 ¡Monitoreo ejecutado en tiempo real!");
     } catch (err) {
+      console.error(err);
       alert("❌ Error ejecutando el monitoreo.");
     } finally {
       setLoading(false);
@@ -58,25 +71,30 @@ export default function Dashboard() {
 
   const createConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!keyword) return;
-    const exito = retailers.find((r) => r.code === "exito");
-    if (!exito) return;
+    if (!keyword || !selectedRetailerId) {
+      alert("Por favor completa la palabra clave y selecciona un retailer.");
+      return;
+    }
 
     try {
-      await fetch(`${API_URL}/configs/`, {
+      const res = await fetch(`${API_URL}/configs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: `Busqueda: ${keyword}`,
-          retailer_id: exito.id,
+          retailer_id: selectedRetailerId,
           search_keyword: keyword,
           frequency_hours: 6
         })
       });
+
+      if (!res.ok) throw new Error("Error al guardar en la base de datos");
+
       setKeyword("");
       fetchData();
     } catch (err) {
-      console.error("Error al guardar la configuración", err);
+      console.error("Error al guardar la configuración:", err);
+      alert("❌ No se pudo guardar la configuración.");
     }
   };
 
@@ -130,6 +148,21 @@ export default function Dashboard() {
           </h2>
           <form onSubmit={createConfig} className="flex flex-col gap-4">
             <div>
+              <label className="block text-sm text-slate-400 mb-1">Retailer / Comercio</label>
+              <select
+                value={selectedRetailerId}
+                onChange={(e) => setSelectedRetailerId(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
+              >
+                {retailers.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name} ({r.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
               <label className="block text-sm text-slate-400 mb-1">Palabra Clave (Keyword)</label>
               <input
                 type="text"
@@ -139,6 +172,7 @@ export default function Dashboard() {
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
               />
             </div>
+            
             <button
               type="submit"
               className="bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 rounded-lg transition-all"
