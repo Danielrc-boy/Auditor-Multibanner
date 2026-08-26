@@ -1,4 +1,5 @@
 import os
+import inspect
 import asyncio
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException
@@ -64,7 +65,7 @@ def save_scraper_results(results: List[Any]) -> int:
             if not name:
                 continue
 
-            retailer = parse_item_field(r, "retailer") or parse_item_field(r, "store") or "Desconocido"
+            retailer = parse_item_field(r, "retailer") or parse_item_field(r, "store") or "Exito"
             search_term = parse_item_field(r, "search_term") or parse_item_field(r, "keyword") or "General"
             position = parse_item_field(r, "position") or parse_item_field(r, "index")
             price = parse_item_field(r, "price")
@@ -101,38 +102,58 @@ def save_scraper_results(results: List[Any]) -> int:
 async def run_vtex_scraping(terms: List[str]) -> List[Any]:
     extracted = []
     
-    # LOG PUNTO 1: Imprimir términos antes de instanciar el scraper
     print(f"\n[LOG SCRAPER] 1. Términos a buscar recibidos: {terms}", flush=True)
 
-    async with VTEXScraper() as scraper:
-        for term in terms:
-            try:
-                res = []
-                method_used = "Ninguno"
+    # Instanciación directa sin 'async with'
+    try:
+        scraper = VTEXScraper()
+    except Exception as inst_err:
+        print(f"[LOG SCRAPER] ERROR al instanciar VTEXScraper: {inst_err}", flush=True)
+        return []
 
-                if hasattr(scraper, "search_products"):
-                    method_used = "search_products"
-                    res = await scraper.search_products(term)
-                elif hasattr(scraper, "scrape"):
-                    method_used = "scrape"
-                    res = await scraper.scrape(term)
-                elif hasattr(scraper, "search"):
-                    method_used = "search"
-                    res = await scraper.search(term)
+    for term in terms:
+        try:
+            res = []
+            method_used = "Ninguno"
 
-                count = len(res) if isinstance(res, list) else 0
+            if hasattr(scraper, "search_products"):
+                method_used = "search_products"
+                raw_res = scraper.search_products(term)
+            elif hasattr(scraper, "scrape"):
+                method_used = "scrape"
+                raw_res = scraper.scrape(term)
+            elif hasattr(scraper, "search"):
+                method_used = "search"
+                raw_res = scraper.search(term)
+            else:
+                raw_res = []
 
-                # LOG PUNTO 2: Resultados por término
-                if count > 0:
-                    print(f"[LOG SCRAPER] 2. Término '{term}' vía '{method_used}': devueltos {count} productos.", flush=True)
-                    extracted.extend(res)
-                else:
-                    print(f"[LOG SCRAPER] 2. ALERTA: Término '{term}' vía '{method_used}' devolvió 0 resultados. Tipo retornado: {type(res)} | Contenido raw: {res}", flush=True)
+            # Manejo transparente por si el método resultó ser 'async def' o síncrono
+            if inspect.isawaitable(raw_res):
+                res = await raw_res
+            else:
+                res = raw_res
 
-            except Exception as err:
-                # LOG PUNTO 2 (Error capturado): Imprimir excepción exacta
-                print(f"[LOG SCRAPER] 2. ERROR CAPTURADO buscando '{term}': {type(err).__name__} - {str(err)}", flush=True)
-                
+            count = len(res) if isinstance(res, list) else 0
+
+            if count > 0:
+                print(f"[LOG SCRAPER] 2. Término '{term}' vía '{method_used}': devueltos {count} productos.", flush=True)
+                extracted.extend(res)
+            else:
+                print(f"[LOG SCRAPER] 2. ALERTA: Término '{term}' vía '{method_used}' devolvió 0 resultados. Tipo: {type(res)} | Raw: {res}", flush=True)
+
+        except Exception as err:
+            print(f"[LOG SCRAPER] 2. ERROR CAPTURADO buscando '{term}': {type(err).__name__} - {str(err)}", flush=True)
+
+    # Limpieza de recursos si la clase tiene un método close
+    if hasattr(scraper, "close") and callable(getattr(scraper, "close")):
+        try:
+            close_res = scraper.close()
+            if inspect.isawaitable(close_res):
+                await close_res
+        except Exception:
+            pass
+
     return extracted
 
 class SearchConfigCreate(BaseModel):
@@ -208,7 +229,6 @@ async def trigger_now():
     
     extracted_products = await run_vtex_scraping(terms)
 
-    # LOG PUNTO 3: Imprimir total acumulado antes de guardar en BD
     print(f"\n[LOG TRIGGER] 3. Total elementos acumulados en extracted_products antes de save_scraper_results: {len(extracted_products)}", flush=True)
 
     total_saved = save_scraper_results(extracted_products)
