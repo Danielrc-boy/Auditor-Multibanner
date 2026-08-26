@@ -57,20 +57,26 @@ def save_scraper_results(results: List[Any]) -> int:
     try:
         data_tuples = []
         for r in results:
+            # Mapeo exacto basado en el modelo ExtractedProductData de vtex_scraper
             name = (
+                parse_item_field(r, "title") or 
                 parse_item_field(r, "product_name") or 
-                parse_item_field(r, "name") or 
-                parse_item_field(r, "title")
+                parse_item_field(r, "name")
             )
             if not name:
                 continue
 
             retailer = parse_item_field(r, "retailer") or parse_item_field(r, "store") or "Exito"
-            search_term = parse_item_field(r, "search_term") or parse_item_field(r, "keyword") or "General"
-            position = parse_item_field(r, "position") or parse_item_field(r, "index")
-            price = parse_item_field(r, "price")
-            discount_price = parse_item_field(r, "discount_price") or parse_item_field(r, "special_price")
-            is_available = parse_item_field(r, "is_available", True)
+            search_term = (
+                parse_item_field(r, "search_keyword") or 
+                parse_item_field(r, "search_term") or 
+                parse_item_field(r, "keyword") or 
+                "General"
+            )
+            position = parse_item_field(r, "search_position") or parse_item_field(r, "position")
+            price = parse_item_field(r, "base_price") or parse_item_field(r, "price")
+            discount_price = parse_item_field(r, "discount_price")
+            is_available = parse_item_field(r, "in_stock", True)
 
             data_tuples.append((
                 retailer,
@@ -104,31 +110,21 @@ async def run_vtex_scraping(terms: List[str]) -> List[Any]:
     
     print(f"\n[LOG SCRAPER] 1. Términos a buscar recibidos: {terms}", flush=True)
 
-    # Instanciación directa sin 'async with'
     try:
         scraper = VTEXScraper()
     except Exception as inst_err:
         print(f"[LOG SCRAPER] ERROR al instanciar VTEXScraper: {inst_err}", flush=True)
         return []
 
+    # PASO 3: Log con el nombre del método explícito confirmado
+    METHOD_NAME = "scrape_keyword"
+    print(f"[LOG SCRAPER] Ejecutando extracción explícita vía método: VTEXScraper.{METHOD_NAME}()", flush=True)
+
     for term in terms:
         try:
-            res = []
-            method_used = "Ninguno"
+            # PASO 2: Llamada directa al método exacto de vtex_scraper
+            raw_res = scraper.scrape_keyword(term)
 
-            if hasattr(scraper, "search_products"):
-                method_used = "search_products"
-                raw_res = scraper.search_products(term)
-            elif hasattr(scraper, "scrape"):
-                method_used = "scrape"
-                raw_res = scraper.scrape(term)
-            elif hasattr(scraper, "search"):
-                method_used = "search"
-                raw_res = scraper.search(term)
-            else:
-                raw_res = []
-
-            # Manejo transparente por si el método resultó ser 'async def' o síncrono
             if inspect.isawaitable(raw_res):
                 res = await raw_res
             else:
@@ -137,15 +133,14 @@ async def run_vtex_scraping(terms: List[str]) -> List[Any]:
             count = len(res) if isinstance(res, list) else 0
 
             if count > 0:
-                print(f"[LOG SCRAPER] 2. Término '{term}' vía '{method_used}': devueltos {count} productos.", flush=True)
+                print(f"[LOG SCRAPER] 2. Término '{term}' vía '{METHOD_NAME}': devueltos {count} productos.", flush=True)
                 extracted.extend(res)
             else:
-                print(f"[LOG SCRAPER] 2. ALERTA: Término '{term}' vía '{method_used}' devolvió 0 resultados. Tipo: {type(res)} | Raw: {res}", flush=True)
+                print(f"[LOG SCRAPER] 2. ALERTA: Término '{term}' vía '{METHOD_NAME}' devolvió 0 resultados. Tipo: {type(res)} | Raw: {res}", flush=True)
 
         except Exception as err:
             print(f"[LOG SCRAPER] 2. ERROR CAPTURADO buscando '{term}': {type(err).__name__} - {str(err)}", flush=True)
 
-    # Limpieza de recursos si la clase tiene un método close
     if hasattr(scraper, "close") and callable(getattr(scraper, "close")):
         try:
             close_res = scraper.close()
