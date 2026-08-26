@@ -7,7 +7,7 @@ from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
 
-# Habilitar CORS para permitir peticiones desde Vercel
+# Permite peticiones CORS y evita bloqueos por redirecciones 307
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,16 +23,18 @@ def get_db_connection():
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al conectar a la BD: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
 class SearchConfigCreate(BaseModel):
     keyword: str
 
 @app.get("/")
 def read_root():
-    return {"message": "API de Monitoreo Multibanner activa"}
+    return {"message": "API Monitoreo Activa"}
 
+# Soporte para ambas URLs: con y sin '/' final
 @app.get("/retailers")
+@app.get("/retailers/")
 def get_retailers():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -43,6 +45,7 @@ def get_retailers():
     return retailers
 
 @app.get("/configs")
+@app.get("/configs/")
 def get_configs():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -53,6 +56,7 @@ def get_configs():
     return configs
 
 @app.post("/configs")
+@app.post("/configs/")
 def create_config(config: SearchConfigCreate):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -70,8 +74,9 @@ def create_config(config: SearchConfigCreate):
         conn.rollback()
         cursor.close()
         conn.close()
-        raise HTTPException(status_code=400, detail=f"Error al guardar la configuración: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error guardando: {str(e)}")
 
 @app.post("/trigger-now")
+@app.post("/trigger-now/")
 def trigger_now():
-    return {"status": "success", "message": "Monitoreo iniciado correctamente"}
+    return {"status": "success", "message": "Monitoreo iniciado"}
