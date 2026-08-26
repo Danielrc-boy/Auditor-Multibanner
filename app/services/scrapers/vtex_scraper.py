@@ -6,8 +6,8 @@ from app.services.scrapers.base import ExtractedProductData
 class VTEXScraper:
     def __init__(self, base_url: str = "https://www.exito.com"):
         self.base_url = base_url.rstrip("/")
-        # Intenta leer de la variable de entorno; si viene None, usa la API Key explícita como fallback
-        self.api_key = os.getenv("SCRAPERAPI_KEY") or "661ba8fdea5785c9cd50723d0d58ac3d"
+        # Intenta leer de entorno; usa la nueva API Key como fallback
+        self.api_key = os.getenv("SCRAPERAPI_KEY") or "a5b2666ef108f22085116902d58b67ba"
 
     async def search_keyword(self, keyword: str, limit: int = 10) -> List[ExtractedProductData]:
         if not self.api_key:
