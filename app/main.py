@@ -1,5 +1,5 @@
 import os
-import inspect
+import asyncio
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,12 +7,10 @@ from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-# Importación directa de la clase VTEXScraper descubierta
 from app.services.scrapers.vtex_scraper import VTEXScraper
 
 app = FastAPI()
 
-# Configuración de dominios permitidos para CORS
 origins = [
     "https://auditor-multibanner.vercel.app",
     "https://auditor-multibanner-i2djrxig5-daniel-restrepo.vercel.app",
@@ -38,13 +36,11 @@ def get_db_connection():
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
 def parse_item_field(obj: Any, field_name: str, default: Any = None) -> Any:
-    """Extrae un campo ya sea si el objeto es Pydantic, Dict o Dataclass."""
     if isinstance(obj, dict):
         return obj.get(field_name, default)
     return getattr(obj, field_name, default)
 
 def save_scraper_results(results: List[Any]) -> int:
-    """Inserta de forma masiva la lista de productos extraídos en PostgreSQL."""
     if not results:
         return 0
 
@@ -68,7 +64,8 @@ def save_scraper_results(results: List[Any]) -> int:
             if not name:
                 continue
 
-            retailer = parse_item_field(r, "retailer") or parse_item_field(r, "store") or "Exito"
+            # Extracción dinámica sin forzar un valor hardcodeado por defecto
+            retailer = parse_item_field(r, "retailer") or parse_item_field(r, "store") or "Desconocido"
             search_term = parse_item_field(r, "search_term") or parse_item_field(r, "keyword") or "General"
             position = parse_item_field(r, "position") or parse_item_field(r, "index")
             price = parse_item_field(r, "price")
@@ -101,6 +98,26 @@ def save_scraper_results(results: List[Any]) -> int:
         cursor.close()
         conn.close()
         raise HTTPException(status_code=500, detail=f"Error insertando en scraper_results: {str(e)}")
+
+async def run_vtex_scraping(terms: List[str]) -> List[Any]:
+    extracted = []
+    async with VTEXScraper() as scraper:
+        for term in terms:
+            try:
+                if hasattr(scraper, "search_products"):
+                    res = await scraper.search_products(term)
+                elif hasattr(scraper, "scrape"):
+                    res = await scraper.scrape(term)
+                elif hasattr(scraper, "search"):
+                    res = await scraper.search(term)
+                else:
+                    res = []
+                
+                if res and isinstance(res, list):
+                    extracted.extend(res)
+            except Exception as err:
+                print(f"Error raspando '{term}' en VTEX: {err}")
+    return extracted
 
 class SearchConfigCreate(BaseModel):
     search_term: Optional[str] = None
@@ -159,10 +176,10 @@ def create_config(config: SearchConfigCreate):
 
 @app.post("/trigger-now")
 @app.post("/trigger-now/")
-def trigger_now():
+async def trigger_now():
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT search_term FROM search_configs;")
+    cursor.execute("SELECT DISTINCT search_term FROM search_configs;")
     configs = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -170,42 +187,13 @@ def trigger_now():
     if not configs:
         return {"status": "warning", "message": "No hay términos configurados para buscar."}
 
-    # Instanciar el scraper de VTEX
-    scraper_instance = VTEXScraper()
+    terms = [cfg["search_term"] for cfg in configs]
     
-    # Identificar el método de búsqueda de la clase
-    search_method = None
-    for method_name in ["scrape", "search", "get_products", "run", "search_products"]:
-        if hasattr(scraper_instance, method_name) and callable(getattr(scraper_instance, method_name)):
-            search_method = getattr(scraper_instance, method_name)
-            break
-
-    if not search_method:
-        # Si tiene otro nombre, toma el primer método público no mágico de la clase
-        methods = [m for m in dir(scraper_instance) if not m.startswith("_") and callable(getattr(scraper_instance, m))]
-        if methods:
-            search_method = getattr(scraper_instance, methods[0])
-
-    all_extracted_products = []
-    
-    if search_method:
-        for cfg in configs:
-            term = cfg["search_term"]
-            try:
-                res = search_method(term)
-                # Si es asíncrono o retorna un generador/lista
-                if inspect.isawaitable(res):
-                    import asyncio
-                    res = asyncio.run(res)
-                if res and isinstance(res, list):
-                    all_extracted_products.extend(res)
-            except Exception as ex:
-                print(f"Error procesando término '{term}': {str(ex)}")
-
-    total_saved = save_scraper_results(all_extracted_products)
+    extracted_products = await run_vtex_scraping(terms)
+    total_saved = save_scraper_results(extracted_products)
 
     return {
         "status": "success",
-        "message": f"Monitoreo ejecutado correctamente con VTEXScraper. {total_saved} registros creados.",
+        "message": f"Monitoreo ejecutado correctamente. {total_saved} productos guardados en la BD.",
         "total_records": total_saved
     }
