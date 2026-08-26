@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -7,7 +8,7 @@ from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
 
-# Permite peticiones CORS y evita bloqueos por redirecciones 307
+# Permite peticiones CORS globales
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,13 +27,13 @@ def get_db_connection():
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
 class SearchConfigCreate(BaseModel):
-    keyword: str
+    search_term: Optional[str] = None
+    keyword: Optional[str] = None
 
 @app.get("/")
 def read_root():
     return {"message": "API Monitoreo Activa"}
 
-# Soporte para ambas URLs: con y sin '/' final
 @app.get("/retailers")
 @app.get("/retailers/")
 def get_retailers():
@@ -58,12 +59,16 @@ def get_configs():
 @app.post("/configs")
 @app.post("/configs/")
 def create_config(config: SearchConfigCreate):
+    term = config.search_term or config.keyword
+    if not term:
+        raise HTTPException(status_code=400, detail="Debe proporcionar 'search_term' o 'keyword'.")
+
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
             "INSERT INTO search_configs (search_term) VALUES (%s) RETURNING *;",
-            (config.keyword,)
+            (term,)
         )
         new_config = cursor.fetchone()
         conn.commit()
