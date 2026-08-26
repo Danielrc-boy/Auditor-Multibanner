@@ -78,26 +78,36 @@ def save_scraper_results(results: List[Dict[str, Any]]) -> int:
         conn.close()
         raise HTTPException(status_code=500, detail=f"Error insertando en scraper_results: {str(e)}")
 
-def get_scraper_function():
-    """Busca dinámicamente la función del scraper en los paquetes del proyecto."""
-    possible_imports = [
-        ("app.services.scraper", "run_all_scrapers"),
-        ("app.services.scraper_service", "run_all_scrapers"),
-        ("app.services.scraper", "run_scraper"),
-        ("app.services.monitoring", "run_all_scrapers"),
-        ("app.scrapers", "run_all_scrapers"),
-        ("test_scrapers", "run_all_scrapers"),
-    ]
+def execute_scrapers_for_term(term: str) -> List[Dict[str, Any]]:
+    """Ejecuta los módulos ubicados en app.services.scrapers."""
+    extracted = []
     
-    for module_path, func_name in possible_imports:
+    # 1. Intentar importar la función orquestadora principal si existe en el paquete
+    try:
+        pkg = importlib.import_module("app.services.scrapers")
+        if hasattr(pkg, "run_all_scrapers"):
+            res = pkg.run_all_scrapers(term)
+            return res if isinstance(res, list) else []
+    except ImportError:
+        pass
+
+    # 2. Si no hay un orquestador expuesto en __init__.py, intenta ejecutar los scrapers individuales conocidos
+    scraper_modules = ["exito", "jumbo", "olimpica", "base_scraper", "runner"]
+    
+    for mod_name in scraper_modules:
         try:
-            mod = importlib.import_module(module_path)
-            func = getattr(mod, func_name, None)
-            if func and callable(func):
-                return func
+            mod = importlib.import_module(f"app.services.scrapers.{mod_name}")
+            for fn_name in ["run", "scrape", "search", "run_scraper", "execute"]:
+                fn = getattr(mod, fn_name, None)
+                if fn and callable(fn):
+                    res = fn(term)
+                    if isinstance(res, list):
+                        extracted.extend(res)
+                    break
         except ImportError:
             continue
-    return None
+            
+    return extracted
 
 class SearchConfigCreate(BaseModel):
     search_term: Optional[str] = None
@@ -167,20 +177,17 @@ def trigger_now():
     if not configs:
         return {"status": "warning", "message": "No hay términos configurados para buscar."}
 
-    run_scrapers_fn = get_scraper_function()
-
     all_extracted_products = []
-    if run_scrapers_fn:
-        for cfg in configs:
-            term = cfg["search_term"]
-            results = run_scrapers_fn(term)
-            if results and isinstance(results, list):
-                all_extracted_products.extend(results)
+    for cfg in configs:
+        term = cfg["search_term"]
+        results = execute_scrapers_for_term(term)
+        if results:
+            all_extracted_products.extend(results)
 
     total_saved = save_scraper_results(all_extracted_products)
 
     return {
         "status": "success",
-        "message": f"Monitoreo ejecutado en tiempo real. {total_saved} registros insertados.",
+        "message": f"Monitoreo ejecutado. {total_saved} registros insertados.",
         "total_records": total_saved
     }
