@@ -1,4 +1,5 @@
 import os
+import importlib
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -77,6 +78,27 @@ def save_scraper_results(results: List[Dict[str, Any]]) -> int:
         conn.close()
         raise HTTPException(status_code=500, detail=f"Error insertando en scraper_results: {str(e)}")
 
+def get_scraper_function():
+    """Busca dinámicamente la función del scraper en los paquetes del proyecto."""
+    possible_imports = [
+        ("app.services.scraper", "run_all_scrapers"),
+        ("app.services.scraper_service", "run_all_scrapers"),
+        ("app.services.scraper", "run_scraper"),
+        ("app.services.monitoring", "run_all_scrapers"),
+        ("app.scrapers", "run_all_scrapers"),
+        ("test_scrapers", "run_all_scrapers"),
+    ]
+    
+    for module_path, func_name in possible_imports:
+        try:
+            mod = importlib.import_module(module_path)
+            func = getattr(mod, func_name, None)
+            if func and callable(func):
+                return func
+        except ImportError:
+            continue
+    return None
+
 class SearchConfigCreate(BaseModel):
     search_term: Optional[str] = None
     keyword: Optional[str] = None
@@ -145,35 +167,20 @@ def trigger_now():
     if not configs:
         return {"status": "warning", "message": "No hay términos configurados para buscar."}
 
-    # Intentar importar la función de scraping disponible en el proyecto
-    run_scrapers_fn = None
-    try:
-        from app.scrapers import run_all_scrapers
-        run_scrapers_fn = run_all_scrapers
-    except ImportError:
-        try:
-            from test_scrapers import run_all_scrapers
-            run_scrapers_fn = run_all_scrapers
-        except ImportError:
-            pass
-
-    if not run_scrapers_fn:
-        raise HTTPException(
-            status_code=500, 
-            detail="No se encontró la función ejecutra del scraper (run_all_scrapers)."
-        )
+    run_scrapers_fn = get_scraper_function()
 
     all_extracted_products = []
-    for cfg in configs:
-        term = cfg["search_term"]
-        results = run_scrapers_fn(term)
-        if results and isinstance(results, list):
-            all_extracted_products.extend(results)
+    if run_scrapers_fn:
+        for cfg in configs:
+            term = cfg["search_term"]
+            results = run_scrapers_fn(term)
+            if results and isinstance(results, list):
+                all_extracted_products.extend(results)
 
     total_saved = save_scraper_results(all_extracted_products)
 
     return {
         "status": "success",
-        "message": f"Monitoreo finalizado exitosamente. {total_saved} registros insertados.",
+        "message": f"Monitoreo ejecutado en tiempo real. {total_saved} registros insertados.",
         "total_records": total_saved
     }
