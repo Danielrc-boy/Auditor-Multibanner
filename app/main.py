@@ -64,7 +64,6 @@ def save_scraper_results(results: List[Any]) -> int:
             if not name:
                 continue
 
-            # Extracción dinámica sin forzar un valor hardcodeado por defecto
             retailer = parse_item_field(r, "retailer") or parse_item_field(r, "store") or "Desconocido"
             search_term = parse_item_field(r, "search_term") or parse_item_field(r, "keyword") or "General"
             position = parse_item_field(r, "position") or parse_item_field(r, "index")
@@ -101,22 +100,39 @@ def save_scraper_results(results: List[Any]) -> int:
 
 async def run_vtex_scraping(terms: List[str]) -> List[Any]:
     extracted = []
+    
+    # LOG PUNTO 1: Imprimir términos antes de instanciar el scraper
+    print(f"\n[LOG SCRAPER] 1. Términos a buscar recibidos: {terms}", flush=True)
+
     async with VTEXScraper() as scraper:
         for term in terms:
             try:
+                res = []
+                method_used = "Ninguno"
+
                 if hasattr(scraper, "search_products"):
+                    method_used = "search_products"
                     res = await scraper.search_products(term)
                 elif hasattr(scraper, "scrape"):
+                    method_used = "scrape"
                     res = await scraper.scrape(term)
                 elif hasattr(scraper, "search"):
+                    method_used = "search"
                     res = await scraper.search(term)
-                else:
-                    res = []
-                
-                if res and isinstance(res, list):
+
+                count = len(res) if isinstance(res, list) else 0
+
+                # LOG PUNTO 2: Resultados por término
+                if count > 0:
+                    print(f"[LOG SCRAPER] 2. Término '{term}' vía '{method_used}': devueltos {count} productos.", flush=True)
                     extracted.extend(res)
+                else:
+                    print(f"[LOG SCRAPER] 2. ALERTA: Término '{term}' vía '{method_used}' devolvió 0 resultados. Tipo retornado: {type(res)} | Contenido raw: {res}", flush=True)
+
             except Exception as err:
-                print(f"Error raspando '{term}' en VTEX: {err}")
+                # LOG PUNTO 2 (Error capturado): Imprimir excepción exacta
+                print(f"[LOG SCRAPER] 2. ERROR CAPTURADO buscando '{term}': {type(err).__name__} - {str(err)}", flush=True)
+                
     return extracted
 
 class SearchConfigCreate(BaseModel):
@@ -185,11 +201,16 @@ async def trigger_now():
     conn.close()
 
     if not configs:
+        print("[LOG TRIGGER] ALERTA: No se encontraron términos en search_configs.", flush=True)
         return {"status": "warning", "message": "No hay términos configurados para buscar."}
 
     terms = [cfg["search_term"] for cfg in configs]
     
     extracted_products = await run_vtex_scraping(terms)
+
+    # LOG PUNTO 3: Imprimir total acumulado antes de guardar en BD
+    print(f"\n[LOG TRIGGER] 3. Total elementos acumulados en extracted_products antes de save_scraper_results: {len(extracted_products)}", flush=True)
+
     total_saved = save_scraper_results(extracted_products)
 
     return {
