@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -32,6 +32,50 @@ def get_db_connection():
         return conn
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
+
+def save_scraper_results(results: List[Dict[str, Any]]) -> int:
+    """Inserta de forma masiva la lista de productos extraídos en PostgreSQL."""
+    if not results:
+        return 0
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    query = """
+        INSERT INTO scraper_results 
+        (retailer, search_term, product_name, position, price, discount_price, is_available)
+        VALUES (%s, %s, %s, %s, %s, %s, %s);
+    """
+    
+    try:
+        data_tuples = [
+            (
+                r.get("retailer") or r.get("store") or "Desconocido",
+                r.get("search_term") or r.get("keyword") or "General",
+                r.get("product_name") or r.get("title") or r.get("name"),
+                r.get("position") or r.get("index"),
+                r.get("price"),
+                r.get("discount_price") or r.get("special_price"),
+                r.get("is_available", True)
+            )
+            for r in results
+            if r.get("product_name") or r.get("title") or r.get("name")
+        ]
+        
+        if not data_tuples:
+            return 0
+
+        cursor.executemany(query, data_tuples)
+        conn.commit()
+        inserted_count = cursor.rowcount
+        cursor.close()
+        conn.close()
+        return inserted_count
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Error insertando en scraper_results: {str(e)}")
 
 class SearchConfigCreate(BaseModel):
     search_term: Optional[str] = None
@@ -91,4 +135,45 @@ def create_config(config: SearchConfigCreate):
 @app.post("/trigger-now")
 @app.post("/trigger-now/")
 def trigger_now():
-    return {"status": "success", "message": "Monitoreo iniciado"}
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT search_term FROM search_configs;")
+    configs = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if not configs:
+        return {"status": "warning", "message": "No hay términos configurados para buscar."}
+
+    # Intentar importar la función de scraping disponible en el proyecto
+    run_scrapers_fn = None
+    try:
+        from app.scrapers import run_all_scrapers
+        run_scrapers_fn = run_all_scrapers
+    except ImportError:
+        try:
+            from test_scrapers import run_all_scrapers
+            run_scrapers_fn = run_all_scrapers
+        except ImportError:
+            pass
+
+    if not run_scrapers_fn:
+        raise HTTPException(
+            status_code=500, 
+            detail="No se encontró la función ejecutra del scraper (run_all_scrapers)."
+        )
+
+    all_extracted_products = []
+    for cfg in configs:
+        term = cfg["search_term"]
+        results = run_scrapers_fn(term)
+        if results and isinstance(results, list):
+            all_extracted_products.extend(results)
+
+    total_saved = save_scraper_results(all_extracted_products)
+
+    return {
+        "status": "success",
+        "message": f"Monitoreo finalizado exitosamente. {total_saved} registros insertados.",
+        "total_records": total_saved
+    }
