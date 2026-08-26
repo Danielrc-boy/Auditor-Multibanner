@@ -1,11 +1,14 @@
 import os
-import importlib
+import inspect
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
+# Importación directa de la clase VTEXScraper descubierta
+from app.services.scrapers.vtex_scraper import VTEXScraper
 
 app = FastAPI()
 
@@ -34,7 +37,13 @@ def get_db_connection():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
-def save_scraper_results(results: List[Dict[str, Any]]) -> int:
+def parse_item_field(obj: Any, field_name: str, default: Any = None) -> Any:
+    """Extrae un campo ya sea si el objeto es Pydantic, Dict o Dataclass."""
+    if isinstance(obj, dict):
+        return obj.get(field_name, default)
+    return getattr(obj, field_name, default)
+
+def save_scraper_results(results: List[Any]) -> int:
     """Inserta de forma masiva la lista de productos extraídos en PostgreSQL."""
     if not results:
         return 0
@@ -49,21 +58,36 @@ def save_scraper_results(results: List[Dict[str, Any]]) -> int:
     """
     
     try:
-        data_tuples = [
-            (
-                r.get("retailer") or r.get("store") or "Desconocido",
-                r.get("search_term") or r.get("keyword") or "General",
-                r.get("product_name") or r.get("title") or r.get("name"),
-                r.get("position") or r.get("index"),
-                r.get("price"),
-                r.get("discount_price") or r.get("special_price"),
-                r.get("is_available", True)
+        data_tuples = []
+        for r in results:
+            name = (
+                parse_item_field(r, "product_name") or 
+                parse_item_field(r, "name") or 
+                parse_item_field(r, "title")
             )
-            for r in results
-            if r.get("product_name") or r.get("title") or r.get("name")
-        ]
+            if not name:
+                continue
+
+            retailer = parse_item_field(r, "retailer") or parse_item_field(r, "store") or "Exito"
+            search_term = parse_item_field(r, "search_term") or parse_item_field(r, "keyword") or "General"
+            position = parse_item_field(r, "position") or parse_item_field(r, "index")
+            price = parse_item_field(r, "price")
+            discount_price = parse_item_field(r, "discount_price") or parse_item_field(r, "special_price")
+            is_available = parse_item_field(r, "is_available", True)
+
+            data_tuples.append((
+                retailer,
+                search_term,
+                name,
+                position,
+                price,
+                discount_price,
+                is_available
+            ))
         
         if not data_tuples:
+            cursor.close()
+            conn.close()
             return 0
 
         cursor.executemany(query, data_tuples)
@@ -77,37 +101,6 @@ def save_scraper_results(results: List[Dict[str, Any]]) -> int:
         cursor.close()
         conn.close()
         raise HTTPException(status_code=500, detail=f"Error insertando en scraper_results: {str(e)}")
-
-def execute_scrapers_for_term(term: str) -> List[Dict[str, Any]]:
-    """Ejecuta los módulos ubicados en app.services.scrapers."""
-    extracted = []
-    
-    # 1. Intentar importar la función orquestadora principal si existe en el paquete
-    try:
-        pkg = importlib.import_module("app.services.scrapers")
-        if hasattr(pkg, "run_all_scrapers"):
-            res = pkg.run_all_scrapers(term)
-            return res if isinstance(res, list) else []
-    except ImportError:
-        pass
-
-    # 2. Si no hay un orquestador expuesto en __init__.py, intenta ejecutar los scrapers individuales conocidos
-    scraper_modules = ["exito", "jumbo", "olimpica", "base_scraper", "runner"]
-    
-    for mod_name in scraper_modules:
-        try:
-            mod = importlib.import_module(f"app.services.scrapers.{mod_name}")
-            for fn_name in ["run", "scrape", "search", "run_scraper", "execute"]:
-                fn = getattr(mod, fn_name, None)
-                if fn and callable(fn):
-                    res = fn(term)
-                    if isinstance(res, list):
-                        extracted.extend(res)
-                    break
-        except ImportError:
-            continue
-            
-    return extracted
 
 class SearchConfigCreate(BaseModel):
     search_term: Optional[str] = None
@@ -177,17 +170,42 @@ def trigger_now():
     if not configs:
         return {"status": "warning", "message": "No hay términos configurados para buscar."}
 
+    # Instanciar el scraper de VTEX
+    scraper_instance = VTEXScraper()
+    
+    # Identificar el método de búsqueda de la clase
+    search_method = None
+    for method_name in ["scrape", "search", "get_products", "run", "search_products"]:
+        if hasattr(scraper_instance, method_name) and callable(getattr(scraper_instance, method_name)):
+            search_method = getattr(scraper_instance, method_name)
+            break
+
+    if not search_method:
+        # Si tiene otro nombre, toma el primer método público no mágico de la clase
+        methods = [m for m in dir(scraper_instance) if not m.startswith("_") and callable(getattr(scraper_instance, m))]
+        if methods:
+            search_method = getattr(scraper_instance, methods[0])
+
     all_extracted_products = []
-    for cfg in configs:
-        term = cfg["search_term"]
-        results = execute_scrapers_for_term(term)
-        if results:
-            all_extracted_products.extend(results)
+    
+    if search_method:
+        for cfg in configs:
+            term = cfg["search_term"]
+            try:
+                res = search_method(term)
+                # Si es asíncrono o retorna un generador/lista
+                if inspect.isawaitable(res):
+                    import asyncio
+                    res = asyncio.run(res)
+                if res and isinstance(res, list):
+                    all_extracted_products.extend(res)
+            except Exception as ex:
+                print(f"Error procesando término '{term}': {str(ex)}")
 
     total_saved = save_scraper_results(all_extracted_products)
 
     return {
         "status": "success",
-        "message": f"Monitoreo ejecutado. {total_saved} registros insertados.",
+        "message": f"Monitoreo ejecutado correctamente con VTEXScraper. {total_saved} registros creados.",
         "total_records": total_saved
     }
