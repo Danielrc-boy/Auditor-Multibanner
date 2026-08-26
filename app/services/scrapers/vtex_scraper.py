@@ -1,3 +1,4 @@
+import os
 import httpx
 from typing import List
 from app.services.scrapers.base import ExtractedProductData
@@ -5,35 +6,36 @@ from app.services.scrapers.base import ExtractedProductData
 class VTEXScraper:
     def __init__(self, base_url: str = "https://www.exito.com"):
         self.base_url = base_url.rstrip("/")
+        self.api_key = os.getenv("SCRAPERAPI_KEY")
 
-async def search_keyword(self, keyword: str, limit: int = 10) -> List[ExtractedProductData]:
-        url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}"
-        
-        # Headers limpios (evitan compresión manual y emulan navegador estándar)
+    async def search_keyword(self, keyword: str, limit: int = 10) -> List[ExtractedProductData]:
+        if not self.api_key:
+            raise Exception("SCRAPERAPI_KEY no está configurada en las variables de entorno.")
+
+        target_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}"
+
+        # Configuración del proxy vía API de ScraperAPI
+        scraperapi_url = "http://api.scraperapi.com"
+        params = {
+            "api_key": self.api_key,
+            "url": target_url,
+            "keep_headers": "true"  # Mantiene los headers del navegador
+        }
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-            "Referer": "https://www.exito.com/",
-            "Origin": "https://www.exito.com"
+            "Referer": self.base_url,
         }
 
-        # Usamos httpx.AsyncClient con soporte de redirecciones y timeout adecuado
-        async with httpx.AsyncClient(timeout=15.0, verify=False, follow_redirects=True) as client:
-            # Primero visitamos la home rápida para obtener cookies válidas de VTEX
-            try:
-                await client.get(self.base_url, headers={"User-Agent": headers["User-Agent"]})
-            except Exception:
-                pass  # Si falla la home, intentamos la consulta directa
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            response = await client.get(scraperapi_url, params=params, headers=headers)
 
-            # Realizamos la petición real con la sesión con cookies
-            response = await client.get(url, headers=headers)
-
-            print(f"[LOG VTEX RAW] Status: {response.status_code} para URL: {url}", flush=True)
+            print(f"[LOG SCRAPERAPI VTEX] Status: {response.status_code} para palabra: '{keyword}'", flush=True)
 
             if response.status_code not in [200, 206]:
-                # Usamos response.content para evitar errores de decodificación si viene binario
-                raise Exception(f"VTEX API Error: Status {response.status_code} - Body: {response.text[:150]}")
+                raise Exception(f"ScraperAPI Error: Status {response.status_code} - Body: {response.text[:200]}")
 
             raw_products = response.json()
             extracted_items = []
