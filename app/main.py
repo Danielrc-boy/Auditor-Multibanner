@@ -7,10 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Importaciones directas (sin 'app.' ni '.')
-from db import get_session, engine
-from services.orchestrator import run_monitoring_pipeline 
-from models import ScraperResult  
+# Importaciones absolutas con prefijo app (requerido por la estructura del contenedor)
+from app.db import get_session, engine
+from app.services.orchestrator import run_monitoring_pipeline 
+from app.models import ScraperResult  
 
 scheduler = AsyncIOScheduler()
 
