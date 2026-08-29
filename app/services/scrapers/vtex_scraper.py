@@ -1,73 +1,83 @@
 import os
+import urllib.parse
 import httpx
-from typing import List
-from app.services.scrapers.base import ExtractedProductData
+
+RETAILER_URLS = {
+    "exito": "https://www.exito.com",
+    "carulla": "https://www.carulla.com"
+}
+
+class ExtractedProductData:
+    """Objeto que encapsula los campos requeridos por main.py"""
+    def __init__(self, search_keyword: str, search_position: int, title: str, base_price: float, discount_price: float, in_stock: bool):
+        self.search_keyword = search_keyword
+        self.search_position = search_position
+        self.title = title
+        self.base_price = base_price
+        self.discount_price = discount_price
+        self.in_stock = in_stock
 
 class VTEXScraper:
-    def __init__(self, base_url: str = "https://www.exito.com"):
-        self.base_url = base_url.rstrip("/")
-        # Intenta leer de entorno; usa la nueva API Key como fallback
-        self.api_key = os.getenv("SCRAPERAPI_KEY") or "a5b2666ef108f22085116902d58b67ba"
+    def __init__(self, retailer: str = "exito"):
+        self.api_key = os.getenv("SCRAPERAPI_KEY")
+        self.retailer = retailer.lower()
+        self.base_url = RETAILER_URLS.get(self.retailer, "https://www.exito.com")
 
-    async def search_keyword(self, keyword: str, limit: int = 10) -> List[ExtractedProductData]:
-        if not self.api_key:
-            raise Exception("SCRAPERAPI_KEY no está configurada en las variables de entorno.")
+    async def search_keyword(self, search_term: str, limit: int = 50) -> list:
+        encoded_term = urllib.parse.quote(search_term)
+        target_url = (
+            f"{self.base_url}/io/api/catalog_system/pub/products/search/{encoded_term}"
+            f"?_from=0&_to={limit - 1}"
+        )
+        
+        scraperapi_url = (
+            f"http://api.scraperapi.com?api_key={self.api_key}"
+            f"&url={urllib.parse.quote(target_url)}"
+        )
 
-        target_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.get(scraperapi_url)
+                response.raise_for_status()
+                data = response.json()
+                return self._parse_products(data, search_term)
+            except Exception as e:
+                print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{search_term}': {e}", flush=True)
+                return []
 
-        # Configuración del proxy vía API de ScraperAPI
-        scraperapi_url = "http://api.scraperapi.com"
-        params = {
-            "api_key": self.api_key,
-            "url": target_url,
-            "keep_headers": "true"  # Mantiene los headers del navegador
-        }
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-            "Referer": self.base_url,
-        }
-
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            response = await client.get(scraperapi_url, params=params, headers=headers)
-
-            print(f"[LOG SCRAPERAPI VTEX] Status: {response.status_code} para palabra: '{keyword}'", flush=True)
-
-            if response.status_code not in [200, 206]:
-                raise Exception(f"ScraperAPI Error: Status {response.status_code} - Body: {response.text[:200]}")
-
-            raw_products = response.json()
-            extracted_items = []
-
-            for idx, prod in enumerate(raw_products[:limit], start=1):
-                items = prod.get("items", [])
-                if not items:
+    def _parse_products(self, raw_items: list, search_term: str) -> list:
+        parsed_results = []
+        for index, item in enumerate(raw_items, start=1):
+            try:
+                items_list = item.get("items", [])
+                if not items_list:
                     continue
+                
+                first_item = items_list[0]
+                sellers = first_item.get("sellers", [])
+                
+                price = 0.0
+                list_price = 0.0
+                available = True
+                
+                if sellers:
+                    comm_offer = sellers[0].get("commertialOffer", {})
+                    price = float(comm_offer.get("Price", 0.0))
+                    list_price = float(comm_offer.get("ListPrice", price))
+                    available = comm_offer.get("IsAvailable", True)
 
-                item = items[0]
-                sellers = item.get("sellers", [{}])
-                comm_offer = sellers[0].get("commertialOffer", {}) if sellers else {}
-
-                base_price = comm_offer.get("ListPrice", 0.0)
-                discount_price = comm_offer.get("Price", 0.0)
-
-                if discount_price >= base_price:
-                    discount_price = None
-
-                in_stock = comm_offer.get("AvailableQuantity", 0) > 0
-
-                extracted_items.append(ExtractedProductData(
-                    title=prod.get("productName", "Sin título"),
-                    brand=prod.get("brand", "Genérica"),
-                    ean_gtin=item.get("ean"),
-                    search_keyword=keyword,
-                    search_position=idx,
-                    base_price=float(base_price),
-                    discount_price=float(discount_price) if discount_price else None,
-                    is_sponsored=False,
-                    in_stock=in_stock
-                ))
-
-            return extracted_items
+                # Instancia con los atributos requeridos por getattr() en main.py
+                product = ExtractedProductData(
+                    search_keyword=search_term,
+                    search_position=index,
+                    title=item.get("productName", "Sin título"),
+                    base_price=list_price if list_price > 0 else price,
+                    discount_price=price if (price > 0 and price < list_price) else None,
+                    in_stock=available
+                )
+                parsed_results.append(product)
+            except Exception as e:
+                print(f"[PARSER ERROR] {self.retailer.upper()}: {e}", flush=True)
+                continue
+                
+        return parsed_results
