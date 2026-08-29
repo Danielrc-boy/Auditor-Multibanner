@@ -1,79 +1,234 @@
 import os
-from contextlib import asynccontextmanager
+from typing import Optional
 from datetime import datetime
-from typing import Optional, List
-from fastapi import FastAPI, Depends, Query
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-# Importaciones directas de los módulos hermanos en el directorio /app/app
-import db
-import models
-from services.orchestrator import run_monitoring_pipeline 
+app = FastAPI()
 
-scheduler = AsyncIOScheduler()
+origins = [
+    "https://auditor-multibanner.vercel.app",
+    "https://auditor-multibanner-i2djrxig5-daniel-restrepo.vercel.app",
+    "http://localhost:3000",
+]
 
-async def scheduled_monitoring_job():
-    print(f"[CRON JOB] Ejecutando monitoreo automático: {datetime.now()}", flush=True)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_origin_regex=r"https://auditor-multibanner-.*-daniel-restrepo\.vercel\.app",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def get_db_connection():
     try:
-        with Session(db.engine) as session:
-            await run_monitoring_pipeline(session)
-        print("[CRON JOB] Monitoreo automático completado exitosamente.", flush=True)
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
     except Exception as e:
-        print(f"[CRON JOB ERROR] Falló la ejecución: {str(e)}", flush=True)
+        raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Inicia el Scheduler al arrancar
-    scheduler.add_job(
-        scheduled_monitoring_job, 
-        'interval', 
-        hours=6, 
-        id="monitoring_cron_6h",
-        replace_existing=True
-    )
-    scheduler.start()
-    print("[SCHEDULER] APScheduler iniciado correctamente (cada 6 horas).", flush=True)
-    yield
-    # Apaga el Scheduler al detener la app
-    scheduler.shutdown()
-    print("[SCHEDULER] APScheduler detenido.", flush=True)
 
-app = FastAPI(title="Auditor Multibanner API", lifespan=lifespan)
+def save_scraper_results(conn, results: list, retailer: str) -> int:
+    if not results:
+        return 0
+    insert_query = """
+        INSERT INTO scraper_results (
+            retailer, search_term, product_name, position,
+            price, discount_price, is_available
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s);
+    """
+    saved_count = 0
+    with conn.cursor() as cur:
+        for item in results:
+            try:
+                term = getattr(item, "search_keyword", None)
+                pos = getattr(item, "search_position", None)
+                title = getattr(item, "title", None)
+                base_price = getattr(item, "base_price", 0.0)
+                disc_price = getattr(item, "discount_price", None)
+                stock = getattr(item, "in_stock", True)
+                cur.execute(insert_query, (
+                    retailer.capitalize(), term, title, pos,
+                    base_price, disc_price, stock
+                ))
+                saved_count += 1
+            except Exception as e:
+                print(f"[DB ERROR] {retailer}: {e}", flush=True)
+                conn.rollback()
+                continue
+    conn.commit()
+    return saved_count
 
-# --- ENDPOINTS ---
 
-@app.post("/trigger-now")
-async def trigger_now(session: Session = Depends(db.get_session)):
-    results = await run_monitoring_pipeline(session)
-    return {
-        "status": "success",
-        "message": f"Monitoreo ejecutado correctamente. {len(results)} productos guardados en la BD.",
-        "total_records": len(results)
-    }
+async def run_vtex_scraping(conn):
+    search_configs = []
+    with conn.cursor() as cur:
+        cur.execute("SELECT search_term FROM search_configs;")
+        rows = cur.fetchall()
+        search_configs = [r["search_term"] for r in rows] if rows else []
+
+    if not search_configs:
+        print("[VTEX SCRAPING] No hay términos en search_configs.", flush=True)
+        return 0
+
+    retailers = ["exito", "carulla"]
+    total_saved = 0
+
+    from app.services.scrapers.vtex_scraper import VTEXScraper
+
+    for retailer in retailers:
+        print(f"\n[SCRAPING] Iniciando extracción para: {retailer.upper()}", flush=True)
+        scraper = VTEXScraper(retailer=retailer)
+        for term in search_configs:
+            try:
+                results = await scraper.search_keyword(term, limit=50)
+                if results:
+                    count = save_scraper_results(conn, results, retailer=retailer)
+                    total_saved += count
+                    print(f"[{retailer.upper()}] Guardados {count} para '{term}'.", flush=True)
+                else:
+                    print(f"[{retailer.upper()}] Sin resultados para '{term}'.", flush=True)
+            except Exception as e:
+                print(f"[SCRAPING ERROR] {retailer} '{term}': {e}", flush=True)
+
+    return total_saved
+
+
+class SearchConfigCreate(BaseModel):
+    search_term: Optional[str] = None
+    keyword: Optional[str] = None
+
+
+@app.get("/")
+def read_root():
+    return {"message": "API Monitoreo Activa"}
+
+
+@app.get("/retailers")
+@app.get("/retailers/")
+def get_retailers():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM retailers WHERE is_active = TRUE;")
+    retailers = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return retailers
+
+
+@app.get("/configs")
+@app.get("/configs/")
+def get_configs():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM search_configs ORDER BY created_at DESC;")
+    configs = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return configs
+
+
+@app.post("/configs")
+@app.post("/configs/")
+def create_config(config: SearchConfigCreate):
+    term = config.search_term or config.keyword
+    if not term:
+        raise HTTPException(status_code=400, detail="Debe proporcionar 'search_term' o 'keyword'.")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO search_configs (search_term) VALUES (%s) RETURNING *;",
+            (term,)
+        )
+        new_config = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return new_config
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Error guardando: {str(e)}")
+
+
+@app.delete("/configs/{config_id}")
+def delete_config(config_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM search_configs WHERE id = %s RETURNING id;", (config_id,))
+        deleted = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Configuración no encontrada.")
+        return {"status": "success", "deleted_id": config_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Error eliminando: {str(e)}")
+
 
 @app.get("/results")
+@app.get("/results/")
 def get_results(
-    retailer: Optional[str] = Query(None, description="Filtrar por tienda"),
-    search_term: Optional[str] = Query(None, description="Filtrar por término"),
-    date_from: Optional[datetime] = Query(None, description="Fecha inicial ISO"),
-    date_to: Optional[datetime] = Query(None, description="Fecha final ISO"),
-    limit: int = Query(100, ge=1, le=1000, description="Límite de registros"),
-    session: Session = Depends(db.get_session)
+    retailer: Optional[str] = Query(None),
+    search_term: Optional[str] = Query(None),
+    date_from: Optional[datetime] = Query(None),
+    date_to: Optional[datetime] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
 ):
-    statement = select(models.ScraperResult)
-
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = "SELECT * FROM scraper_results WHERE 1=1"
+    params = []
     if retailer:
-        statement = statement.where(models.ScraperResult.retailer.ilike(f"%{retailer}%"))
+        query += " AND retailer ILIKE %s"
+        params.append(f"%{retailer}%")
     if search_term:
-        statement = statement.where(models.ScraperResult.search_term.ilike(f"%{search_term}%"))
+        query += " AND search_term ILIKE %s"
+        params.append(f"%{search_term}%")
     if date_from:
-        statement = statement.where(models.ScraperResult.captured_at >= date_from)
+        query += " AND captured_at >= %s"
+        params.append(date_from)
     if date_to:
-        statement = statement.where(models.ScraperResult.captured_at <= date_to)
-
-    statement = statement.order_by(models.ScraperResult.captured_at.desc()).limit(limit)
-
-    results = session.scalars(statement).all()
+        query += " AND captured_at <= %s"
+        params.append(date_to)
+    query += " ORDER BY captured_at DESC LIMIT %s;"
+    params.append(limit)
+    cursor.execute(query, tuple(params))
+    results = cursor.fetchall()
+    cursor.close()
+    conn.close()
     return results
+
+
+@app.post("/trigger-now")
+@app.post("/trigger-now/")
+async def trigger_now():
+    conn = get_db_connection()
+    try:
+        total_records = await run_vtex_scraping(conn)
+        return {
+            "status": "success",
+            "message": f"Monitoreo ejecutado correctamente en Éxito y Carulla. {total_records} productos guardados.",
+            "total_records": total_records
+        }
+    except Exception as e:
+        print(f"[TRIGGER ERROR] {e}", flush=True)
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()
