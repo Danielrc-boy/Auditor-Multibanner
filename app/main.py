@@ -1,8 +1,11 @@
 import os
+import io
 from typing import Optional
 from datetime import datetime
+import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -232,3 +235,90 @@ async def trigger_now():
         return {"status": "error", "message": str(e)}
     finally:
         conn.close()
+
+
+@app.get("/export")
+@app.get("/export/")
+def export_results(
+    retailer: Optional[str] = Query(None),
+    search_term: Optional[str] = Query(None),
+    date_from: Optional[datetime] = Query(None),
+    date_to: Optional[datetime] = Query(None),
+):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 1. Consulta del histórico completo (Hoja "Tendencia")
+    query_tendencia = "SELECT * FROM scraper_results WHERE 1=1"
+    params = []
+    if retailer:
+        query_tendencia += " AND retailer ILIKE %s"
+        params.append(f"%{retailer}%")
+    if search_term:
+        query_tendencia += " AND search_term ILIKE %s"
+        params.append(f"%{search_term}%")
+    if date_from:
+        query_tendencia += " AND captured_at >= %s"
+        params.append(date_from)
+    if date_to:
+        query_tendencia += " AND captured_at <= %s"
+        params.append(date_to)
+
+    query_tendencia += " ORDER BY captured_at DESC;"
+    cursor.execute(query_tendencia, tuple(params))
+    rows_tendencia = cursor.fetchall()
+
+    if not rows_tendencia:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontraron datos para exportar con los filtros seleccionados."
+        )
+
+    # 2. Consulta de última captura por producto/retailer/search_term (Hoja "Resumen")
+    query_resumen = """
+        SELECT DISTINCT ON (retailer, search_term, product_name) *
+        FROM scraper_results
+        WHERE 1=1
+    """
+    params_resumen = []
+    if retailer:
+        query_resumen += " AND retailer ILIKE %s"
+        params_resumen.append(f"%{retailer}%")
+    if search_term:
+        query_resumen += " AND search_term ILIKE %s"
+        params_resumen.append(f"%{search_term}%")
+    if date_from:
+        query_resumen += " AND captured_at >= %s"
+        params_resumen.append(date_from)
+    if date_to:
+        query_resumen += " AND captured_at <= %s"
+        params_resumen.append(date_to)
+
+    query_resumen += " ORDER BY retailer, search_term, product_name, captured_at DESC;"
+    cursor.execute(query_resumen, tuple(params_resumen))
+    rows_resumen = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    # 3. Construcción del archivo Excel (.xlsx) usando Pandas y OpenPyXL
+    df_tendencia = pd.DataFrame(rows_tendencia)
+    df_resumen = pd.DataFrame(rows_resumen)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_resumen.to_excel(writer, sheet_name="Resumen", index=False)
+        df_tendencia.to_excel(writer, sheet_name="Tendencia", index=False)
+
+    output.seek(0)
+
+    filename = f"digital_shelf_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers
+    )
