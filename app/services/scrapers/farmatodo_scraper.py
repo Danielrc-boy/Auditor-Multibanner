@@ -1,85 +1,42 @@
-import os
-import urllib.parse
-import httpx
-from app.services.scrapers.vtex_scraper import ExtractedProductData
+import requests
 
-class FarmatodoScraper:
-    def __init__(self):
-        # Aseguramos que app_id esté siempre en minúsculas para resolver el dominio DNS de Algolia
-        raw_app_id = os.getenv("ALGOLIA_APP_ID", "118C283I39")
-        self.app_id = raw_app_id.strip()
-        self.app_id_lower = self.app_id.lower()
-        
-        self.api_key = os.getenv("ALGOLIA_API_KEY", "d1ae8a2bd887460e48119ae4cf14022c").strip()
-        self.index_name = os.getenv("ALGOLIA_INDEX_NAME", "products_COL_price_asc").strip()
-        
-        # Dominio estándar público de Algolia
-        self.endpoint = f"https://{self.app_id_lower}-1.algolianet.com/1/indexes/*/queries"
+def search_farmatodo(query: str):
+    # Endpoint oficial de búsqueda según DevTools
+    url = "https://api-search.farmatodo.com/1/indexes/*/queries"
+    
+    headers = {
+        'x-algolia-application-id': 'VCOJEYD2PO',
+        'x-algolia-api-key': 'eb9544fe7bfe7ec4c1aa5e5bf7740feb',
+        'content-type': 'application/json',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+        'origin': 'https://www.farmatodo.com.co',
+        'referer': 'https://www.farmatodo.com.co/'
+    }
 
-    async def search_keyword(self, search_term: str, limit: int = 50) -> list:
-        headers = {
-            "x-algolia-application-id": self.app_id,
-            "x-algolia-api-key": self.api_key,
-            "Content-Type": "application/json"
-        }
+    payload = {
+        "requests": [
+            {
+                "indexName": "products-colombia",
+                "params": f"query={query}&hitsPerPage=10&page=0"
+            }
+        ]
+    }
 
-        params_str = f"query={urllib.parse.quote(search_term)}&hitsPerPage={limit}&page=0"
-        payload = {
-            "requests": [
-                {
-                    "indexName": self.index_name,
-                    "params": params_str
-                }
-            ]
-        }
+    response = requests.post(url, headers=headers, json=payload)
+    print(f"Status Code: {response.status_code}")
+    
+    if response.status_code == 200:
+        results = response.json().get("results", [])[0]
+        hits = results.get("hits", [])
+        print(f"Total de productos extraídos: {len(hits)}\n")
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.post(self.endpoint, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-                
-                results = data.get("results", [])
-                if not results:
-                    return []
-                
-                hits = results[0].get("hits", [])
-                return self._parse_products(hits, search_term)
+        for item in hits:
+            name = item.get('description') or item.get('name') or item.get('title')
+            price = item.get('price') or item.get('offerPrice')
+            brand = item.get('brand')
+            print(f"- {name} | Marca: {brand} | Precio: ${price}")
+    else:
+        print("Error en la petición:", response.text)
 
-            except Exception as e:
-                print(f"[ERROR FARMATODO] Error al scrapear '{search_term}': {e}", flush=True)
-                return []
-
-    def _parse_products(self, raw_hits: list, search_term: str) -> list:
-        parsed_results = []
-        for index, item in enumerate(raw_hits, start=1):
-            try:
-                title = item.get("mediaDescription") or item.get("description") or item.get("brand", "Sin título")
-                
-                price_regular = float(item.get("priceRegular", 0.0) or item.get("price", 0.0))
-                price_offer = float(item.get("priceOffer", 0.0) or price_regular)
-                
-                if price_offer > 0 and price_offer < price_regular:
-                    base_price = price_regular
-                    discount_price = price_offer
-                else:
-                    base_price = price_regular if price_regular > 0 else price_offer
-                    discount_price = None
-
-                stock = item.get("stock", 0)
-                available = stock > 0 if stock is not None else True
-
-                product = ExtractedProductData(
-                    search_keyword=search_term,
-                    search_position=index,
-                    title=title,
-                    base_price=base_price,
-                    discount_price=discount_price,
-                    in_stock=available
-                )
-                parsed_results.append(product)
-            except Exception as e:
-                print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
-                continue
-
-        return parsed_results
+if __name__ == "__main__":
+    search_farmatodo("Nosotras")
