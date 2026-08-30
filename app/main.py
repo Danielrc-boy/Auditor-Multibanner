@@ -74,21 +74,23 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
 async def run_vtex_scraping(conn):
     search_configs = []
     with conn.cursor() as cur:
-        # Solo toma términos con is_active = TRUE
-        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
+        cur.execute("SELECT search_term FROM search_configs;")
         rows = cur.fetchall()
         search_configs = [r["search_term"] for r in rows] if rows else []
 
     if not search_configs:
-        print("[VTEX SCRAPING] No hay términos activos en search_configs.", flush=True)
+        print("[SCRAPING] No hay términos en search_configs.", flush=True)
         return 0
 
-    retailers = ["exito", "carulla"]
     total_saved = 0
 
     from app.services.scrapers.vtex_scraper import VTEXScraper
+    from app.services.scrapers.rappi_scraper import RappiScraper
 
-    for retailer in retailers:
+    vtex_retailers = ["exito", "carulla"]
+
+    # --- Éxito y Carulla (VTEX) ---
+    for retailer in vtex_retailers:
         print(f"\n[SCRAPING] Iniciando extracción para: {retailer.upper()}", flush=True)
         scraper = VTEXScraper(retailer=retailer)
         for term in search_configs:
@@ -102,6 +104,21 @@ async def run_vtex_scraping(conn):
                     print(f"[{retailer.upper()}] Sin resultados para '{term}'.", flush=True)
             except Exception as e:
                 print(f"[SCRAPING ERROR] {retailer} '{term}': {e}", flush=True)
+
+    # --- Rappi ---
+    print(f"\n[SCRAPING] Iniciando extracción para: RAPPI", flush=True)
+    rappi_scraper = RappiScraper()
+    for term in search_configs:
+        try:
+            results = await rappi_scraper.search_keyword(term, limit=50)
+            if results:
+                count = save_scraper_results(conn, results, retailer="rappi")
+                total_saved += count
+                print(f"[RAPPI] Guardados {count} para '{term}'.", flush=True)
+            else:
+                print(f"[RAPPI] Sin resultados para '{term}'.", flush=True)
+        except Exception as e:
+            print(f"[SCRAPING ERROR] rappi '{term}': {e}", flush=True)
 
     return total_saved
 
