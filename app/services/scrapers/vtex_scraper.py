@@ -1,3 +1,4 @@
+import os
 import urllib.parse
 import httpx
 
@@ -5,6 +6,8 @@ RETAILER_URLS = {
     "exito": "https://www.exito.com",
     "carulla": "https://www.carulla.com"
 }
+
+SCRAPERAPI_KEY = os.getenv("SCRAPER_API_KEY") or os.getenv("SCRAPERAPI_KEY")
 
 class ExtractedProductData:
     """Objeto que encapsula los campos requeridos por main.py"""
@@ -23,20 +26,25 @@ class VTEXScraper:
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
         encoded_term = urllib.parse.quote(search_term)
-        # Se elimina '/io/' para que funcione correctamente la API nativa de VTEX
         target_url = (
             f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_term}"
             f"?_from=0&_to={limit - 1}"
         )
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json"
-        }
+        # Si es Éxito y tenemos API Key, pasamos la petición a través de ScraperAPI
+        if self.retailer == "exito" and SCRAPERAPI_KEY:
+            request_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}"
+            headers = {"Accept": "application/json"}
+        else:
+            request_url = target_url
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json"
+            }
 
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
-                response = await client.get(target_url, headers=headers)
+                response = await client.get(request_url, headers=headers)
                 response.raise_for_status()
                 data = response.json()
                 return self._parse_products(data, search_term)
