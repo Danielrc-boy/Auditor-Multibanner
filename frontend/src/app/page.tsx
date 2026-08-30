@@ -13,7 +13,8 @@ import {
   Filter, 
   CheckCircle, 
   XCircle, 
-  TrendingDown 
+  TrendingDown,
+  Trash2
 } from "lucide-react";
 
 // Types
@@ -155,6 +156,33 @@ export default function Dashboard() {
     }
   };
 
+  const toggleConfigStatus = async (id: string) => {
+    try {
+      const res = await fetch(`${API_URL}/configs/${id}/toggle`, {
+        method: "PATCH",
+      });
+      if (!res.ok) throw new Error("Error al cambiar el estado");
+      fetchData();
+    } catch (err) {
+      console.error("Error toggling status:", err);
+      alert("❌ No se pudo cambiar el estado de la búsqueda.");
+    }
+  };
+
+  const deleteConfig = async (id: string) => {
+    if (!confirm("¿Estás seguro de que deseas eliminar esta búsqueda?")) return;
+    try {
+      const res = await fetch(`${API_URL}/configs/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Error al eliminar");
+      fetchData();
+    } catch (err) {
+      console.error("Error deleting config:", err);
+      alert("❌ No se pudo eliminar la configuración.");
+    }
+  };
+
   const handleExportExcel = async () => {
     setExporting(true);
     try {
@@ -283,17 +311,37 @@ export default function Dashboard() {
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
           <h2 className="text-lg font-semibold mb-4">Monitoreos Programados</h2>
           <div className="flex flex-col gap-3">
-            {configs.map((cfg) => (
-              <div key={cfg.id} className="bg-slate-900 p-4 rounded-lg flex justify-between items-center border border-slate-700/50">
-                <div>
-                  <p className="font-medium text-slate-200">{cfg.name || `Búsqueda: ${cfg.search_term}`}</p>
-                  <p className="text-xs text-slate-500">Frecuencia: cada {cfg.frequency_hours || 6} horas</p>
+            {configs.length === 0 ? (
+              <p className="text-sm text-slate-500">No hay búsquedas configuradas.</p>
+            ) : (
+              configs.map((cfg) => (
+                <div key={cfg.id} className="bg-slate-900 p-4 rounded-lg flex justify-between items-center border border-slate-700/50">
+                  <div>
+                    <p className="font-medium text-slate-200">{cfg.name || `Búsqueda: ${cfg.search_term}`}</p>
+                    <p className="text-xs text-slate-500">Frecuencia: cada {cfg.frequency_hours || 6} horas</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => toggleConfigStatus(cfg.id)}
+                      className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                        cfg.is_active !== false
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
+                          : "bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20"
+                      }`}
+                    >
+                      {cfg.is_active !== false ? "Activo" : "Inactivo"}
+                    </button>
+                    <button
+                      onClick={() => deleteConfig(cfg.id)}
+                      className="text-slate-500 hover:text-rose-400 transition-colors p-1"
+                      title="Eliminar búsqueda"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <span className="text-xs bg-emerald-500/10 text-emerald-400 px-3 py-1 rounded-full border border-emerald-500/20">
-                  Activo
-                </span>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>

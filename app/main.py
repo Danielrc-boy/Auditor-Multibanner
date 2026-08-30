@@ -23,7 +23,7 @@ app.add_middleware(
     allow_origins=origins,
     allow_origin_regex=r"https://auditor-multibanner-.*-daniel-restrepo\.vercel\.app",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -74,12 +74,13 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
 async def run_vtex_scraping(conn):
     search_configs = []
     with conn.cursor() as cur:
-        cur.execute("SELECT search_term FROM search_configs;")
+        # Solo toma términos con is_active = TRUE
+        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
         rows = cur.fetchall()
         search_configs = [r["search_term"] for r in rows] if rows else []
 
     if not search_configs:
-        print("[VTEX SCRAPING] No hay términos en search_configs.", flush=True)
+        print("[VTEX SCRAPING] No hay términos activos en search_configs.", flush=True)
         return 0
 
     retailers = ["exito", "carulla"]
@@ -108,12 +109,13 @@ async def run_vtex_scraping(conn):
 async def run_farmatodo_scraping(conn):
     search_configs = []
     with conn.cursor() as cur:
-        cur.execute("SELECT search_term FROM search_configs;")
+        # Solo toma términos con is_active = TRUE
+        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
         rows = cur.fetchall()
         search_configs = [r["search_term"] for r in rows] if rows else []
 
     if not search_configs:
-        print("[FARMATODO SCRAPING] No hay términos en search_configs.", flush=True)
+        print("[FARMATODO SCRAPING] No hay términos activos en search_configs.", flush=True)
         return 0
 
     total_saved = 0
@@ -186,7 +188,7 @@ def create_config(config: SearchConfigCreate):
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO search_configs (search_term) VALUES (%s) RETURNING *;",
+            "INSERT INTO search_configs (search_term, is_active) VALUES (%s, TRUE) RETURNING *;",
             (term,)
         )
         new_config = cursor.fetchone()
@@ -199,6 +201,31 @@ def create_config(config: SearchConfigCreate):
         cursor.close()
         conn.close()
         raise HTTPException(status_code=400, detail=f"Error guardando: {str(e)}")
+
+
+@app.patch("/configs/{config_id}/toggle")
+def toggle_config(config_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE search_configs SET is_active = NOT is_active WHERE id = %s RETURNING id, search_term, is_active;",
+            (config_id,)
+        )
+        updated = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        if not updated:
+            raise HTTPException(status_code=404, detail="Configuración no encontrada.")
+        return {"status": "success", "config": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Error actualizando estado: {str(e)}")
 
 
 @app.delete("/configs/{config_id}")
@@ -286,7 +313,6 @@ def export_results(
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # 1. Consulta del histórico completo (Hoja "Tendencia")
     query_tendencia = "SELECT * FROM scraper_results WHERE 1=1"
     params = []
     if retailer:
@@ -314,7 +340,6 @@ def export_results(
             detail="No se encontraron datos para exportar con los filtros seleccionados."
         )
 
-    # 2. Consulta de última captura por producto/retailer/search_term (Hoja "Resumen")
     query_resumen = """
         SELECT DISTINCT ON (retailer, search_term, product_name) *
         FROM scraper_results
@@ -341,7 +366,6 @@ def export_results(
     cursor.close()
     conn.close()
 
-    # 3. Construcción del archivo Excel (.xlsx) usando Pandas y OpenPyXL
     df_tendencia = pd.DataFrame(rows_tendencia)
     df_resumen = pd.DataFrame(rows_resumen)
 
