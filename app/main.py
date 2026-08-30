@@ -89,7 +89,7 @@ async def run_vtex_scraping(conn):
 
     for retailer in retailers:
         print(f"\n[SCRAPING] Iniciando extracción para: {retailer.upper()}", flush=True)
-        # INSTANCIA ÚNICA POR RETAILER: Garantiza la reutilización de sesión/tokens durante la corrida
+        # INSTANCIA ÚNICA POR RETAILER: Reutiliza la sesión durante la corrida
         scraper = VTEXScraper(retailer=retailer)
         for term in search_configs:
             try:
@@ -109,7 +109,6 @@ async def run_vtex_scraping(conn):
 async def run_farmatodo_scraping(conn):
     search_configs = []
     with conn.cursor() as cur:
-        # Solo toma términos con is_active = TRUE
         cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
         rows = cur.fetchall()
         search_configs = [r["search_term"] for r in rows] if rows else []
@@ -138,10 +137,44 @@ async def run_farmatodo_scraping(conn):
     return total_saved
 
 
+async def run_rappi_scraping(conn):
+    search_configs = []
+    with conn.cursor() as cur:
+        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
+        rows = cur.fetchall()
+        search_configs = [r["search_term"] for r in rows] if rows else []
+
+    if not search_configs:
+        print("[RAPPI SCRAPING] No hay términos activos en search_configs.", flush=True)
+        return 0
+
+    total_saved = 0
+    from app.services.scrapers.rappi_scraper import RappiScraper
+
+    print("\n[SCRAPING] Iniciando extracción para: RAPPI", flush=True)
+    # INSTANCIA ÚNICA: Reutiliza token/sesión de Rappi para evitar errores 401 y 429
+    scraper = RappiScraper()
+
+    for term in search_configs:
+        try:
+            results = await scraper.search_keyword(term, limit=50)
+            if results:
+                count = save_scraper_results(conn, results, retailer="rappi")
+                total_saved += count
+                print(f"[RAPPI] Guardados {count} para '{term}'.", flush=True)
+            else:
+                print(f"[RAPPI] Sin resultados para '{term}'.", flush=True)
+        except Exception as e:
+            print(f"[SCRAPING ERROR] RAPPI '{term}': {e}", flush=True)
+
+    return total_saved
+
+
 async def run_all_scraping(conn):
     vtex_total = await run_vtex_scraping(conn)
     farmatodo_total = await run_farmatodo_scraping(conn)
-    return vtex_total + farmatodo_total
+    rappi_total = await run_rappi_scraping(conn)
+    return vtex_total + farmatodo_total + rappi_total
 
 
 class SearchConfigCreate(BaseModel):
@@ -292,7 +325,7 @@ async def trigger_now():
         total_records = await run_all_scraping(conn)
         return {
             "status": "success",
-            "message": f"Monitoreo ejecutado correctamente en Éxito, Carulla y Farmatodo. {total_records} productos guardados.",
+            "message": f"Monitoreo ejecutado correctamente en Éxito, Carulla, Farmatodo y Rappi. {total_records} productos guardados.",
             "total_records": total_records
         }
     except Exception as e:
