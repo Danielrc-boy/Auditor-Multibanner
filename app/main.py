@@ -37,71 +37,42 @@ def get_db_connection():
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
 
-def save_scraper_results(conn, results: list, retailer: str) -> int:
-    if not results:
-        return 0
-    insert_query = """
-        INSERT INTO scraper_results (
-            retailer, search_term, product_name, position,
-            price, discount_price, is_available
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s);
-    """
-    saved_count = 0
-    formatted_retailer = retailer.capitalize() if retailer else "Unknown"
-    with conn.cursor() as cur:
-        for item in results:
-            try:
-                term = getattr(item, "search_keyword", None)
-                pos = getattr(item, "search_position", None)
-                title = getattr(item, "title", None)
-                base_price = getattr(item, "base_price", 0.0)
-                disc_price = getattr(item, "discount_price", None)
-                stock = getattr(item, "in_stock", True)
-                cur.execute(insert_query, (
-                    formatted_retailer, term, title, pos,
-                    base_price, disc_price, stock
-                ))
-                saved_count += 1
-            except Exception as e:
-                print(f"[DB ERROR] {formatted_retailer}: {e}", flush=True)
-                conn.rollback()
-                continue
-    conn.commit()
-    return saved_count
+--- a/app/main.py
++++ b/app/main.py
+@@ -35,10 +35,10 @@ def get_db_connection():
 
-
-async def run_vtex_scraping(conn):
-    search_configs = []
-    with conn.cursor() as cur:
-        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
-        rows = cur.fetchall()
-        search_configs = [r["search_term"] for r in rows] if rows else []
-
-    if not search_configs:
-        print("[VTEX SCRAPING] No hay términos activos en search_configs.", flush=True)
-        return 0
-
-    retailers = ["exito", "carulla"]
-    total_saved = 0
-
-    from app.services.scrapers.vtex_scraper import VTEXScraper
-
-    for retailer in retailers:
-        print(f"\n[SCRAPING] Iniciando extracción para: {retailer.upper()}", flush=True)
-        # INSTANCIA ÚNICA POR RETAILER: Reutiliza la sesión durante la corrida
-        scraper = VTEXScraper(retailer=retailer)
-        for term in search_configs:
-            try:
-                results = await scraper.search_keyword(term, limit=50)
-                if results:
-                    count = save_scraper_results(conn, results, retailer=retailer)
-                    total_saved += count
-                    print(f"[{retailer.upper()}] Guardados {count} para '{term}'.", flush=True)
-                else:
-                    print(f"[{retailer.upper()}] Sin resultados para '{term}'.", flush=True)
-            except Exception as e:
-                print(f"[SCRAPING ERROR] {retailer} '{term}': {e}", flush=True)
+ def save_scraper_results(conn, results: list, retailer: str) -> int:
+     if not results:
+         return 0
+     insert_query = """
+         INSERT INTO scraper_results (
+-            retailer, search_term, product_name, position,
++            retailer, search_term, product_name, brand, position,
+             price, discount_price, is_available
+         )
+-        VALUES (%s, %s, %s, %s, %s, %s, %s);
++        VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+     """
+     saved_count = 0
+     formatted_retailer = retailer.capitalize() if retailer else "Unknown"
+     with conn.cursor() as cur:
+         for item in results:
+             try:
+                 term = getattr(item, "search_keyword", None)
+                 pos = getattr(item, "search_position", None)
+                 title = getattr(item, "title", None)
++                brand = getattr(item, "brand", None)
+                 base_price = getattr(item, "base_price", 0.0)
+                 disc_price = getattr(item, "discount_price", None)
+                 stock = getattr(item, "in_stock", True)
+                 cur.execute(insert_query, (
+-                    formatted_retailer, term, title, pos,
++                    formatted_retailer, term, title, brand, pos,
+                     base_price, disc_price, stock
+                 ))
+                 saved_count += 1
+             except Exception as e:
+                 print(f"[DB ERROR] {formatted_retailer}: {e}", flush=True)
 
     return total_saved
 

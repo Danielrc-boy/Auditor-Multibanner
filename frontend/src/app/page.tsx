@@ -40,6 +40,7 @@ interface ScraperResult {
   retailer: string;
   search_term: string;
   product_name: string;
+  brand?: string | null;
   position: number;
   price: number;
   discount_price: number | null;
@@ -473,6 +474,7 @@ export default function Dashboard() {
                   <th className="px-4 py-3">Retailer</th>
                   <th className="px-4 py-3">Término</th>
                   <th className="px-4 py-3">Pos.</th>
+                  <th className="px-4 py-3">Marca</th>
                   <th className="px-4 py-3">Producto</th>
                   <th className="px-4 py-3">Precio Base</th>
                   <th className="px-4 py-3">Precio Final</th>
@@ -484,14 +486,14 @@ export default function Dashboard() {
                 {loadingResults ? (
                   Array.from({ length: 4 }).map((_, i) => (
                     <tr key={i} className="animate-pulse">
-                      <td colSpan={8} className="px-4 py-4">
+                      <td colSpan={9} className="px-4 py-4">
                         <div className="h-4 bg-slate-700 rounded"></div>
                       </td>
                     </tr>
                   ))
                 ) : results.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
                       No hay resultados capturados para los filtros seleccionados.
                     </td>
                   </tr>
@@ -509,6 +511,7 @@ export default function Dashboard() {
                         </td>
                         <td className="px-4 py-3 text-slate-400">{row.search_term}</td>
                         <td className="px-4 py-3 font-semibold text-emerald-400">#{row.position}</td>
+                        <td className="px-4 py-3 text-slate-300 font-medium">{row.brand || "-"}</td>
                         <td className="px-4 py-3 max-w-xs truncate font-medium text-slate-100" title={row.product_name}>
                           {row.product_name}
                         </td>
@@ -523,23 +526,14 @@ export default function Dashboard() {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-3">
-                          {row.is_available ? (
-                            <span className="inline-flex items-center gap-1 text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                              <CheckCircle className="w-3 h-3" /> Disponible
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-xs text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20">
-                              <XCircle className="w-3 h-3" /> Agotado
-                            </span>
-                          )}
-                        </td>
                         <td className="px-4 py-3 text-xs text-slate-400">
                           {new Date(row.captured_at).toLocaleString("es-CO", {
+                            timeZone: "America/Bogota",
                             day: "2-digit",
                             month: "short",
                             hour: "2-digit",
                             minute: "2-digit",
+                            hour12: true
                           })}
                         </td>
                       </tr>
