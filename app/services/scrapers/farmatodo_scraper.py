@@ -5,10 +5,16 @@ from app.services.scrapers.vtex_scraper import ExtractedProductData
 
 class FarmatodoScraper:
     def __init__(self):
-        self.app_id = os.getenv("ALGOLIA_APP_ID", "118C283I39")
-        self.api_key = os.getenv("ALGOLIA_API_KEY", "d1ae8a2bd887460e48119ae4cf14022c")
-        self.index_name = os.getenv("ALGOLIA_INDEX_NAME", "products_COL_price_asc")
-        self.endpoint = f"https://{self.app_id}-1.algolianet.com/1/indexes/*/queries"
+        # Aseguramos que app_id esté siempre en minúsculas para resolver el dominio DNS de Algolia
+        raw_app_id = os.getenv("ALGOLIA_APP_ID", "118C283I39")
+        self.app_id = raw_app_id.strip()
+        self.app_id_lower = self.app_id.lower()
+        
+        self.api_key = os.getenv("ALGOLIA_API_KEY", "d1ae8a2bd887460e48119ae4cf14022c").strip()
+        self.index_name = os.getenv("ALGOLIA_INDEX_NAME", "products_COL_price_asc").strip()
+        
+        # Dominio estándar público de Algolia
+        self.endpoint = f"https://{self.app_id_lower}-dsn.algolia.net/1/indexes/*/queries"
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
         headers = {
@@ -48,10 +54,8 @@ class FarmatodoScraper:
         parsed_results = []
         for index, item in enumerate(raw_hits, start=1):
             try:
-                # Titulo y descripción del producto en Algolia
                 title = item.get("mediaDescription") or item.get("description") or item.get("brand", "Sin título")
                 
-                # Manejo de precios
                 price_regular = float(item.get("priceRegular", 0.0) or item.get("price", 0.0))
                 price_offer = float(item.get("priceOffer", 0.0) or price_regular)
                 
@@ -62,7 +66,6 @@ class FarmatodoScraper:
                     base_price = price_regular if price_regular > 0 else price_offer
                     discount_price = None
 
-                # Disponibilidad y stock
                 stock = item.get("stock", 0)
                 available = stock > 0 if stock is not None else True
 
