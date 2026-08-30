@@ -14,7 +14,7 @@ class FarmatodoScraper:
         self.index_name = os.getenv("ALGOLIA_INDEX_NAME", "products_COL_price_asc").strip()
         
         # Dominio estándar público de Algolia
-        self.endpoint = f"https://{self.app_id_lower}-dsn.algolia.net/1/indexes/*/queries"
+        self.endpoint = f"https://{self.app_id_lower}-1.algolianet.com/1/indexes/*/queries"
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
         headers = {
