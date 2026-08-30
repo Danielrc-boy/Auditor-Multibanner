@@ -48,6 +48,7 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
         VALUES (%s, %s, %s, %s, %s, %s, %s);
     """
     saved_count = 0
+    formatted_retailer = retailer.capitalize() if retailer else "Unknown"
     with conn.cursor() as cur:
         for item in results:
             try:
@@ -58,12 +59,12 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                 disc_price = getattr(item, "discount_price", None)
                 stock = getattr(item, "in_stock", True)
                 cur.execute(insert_query, (
-                    retailer.capitalize(), term, title, pos,
+                    formatted_retailer, term, title, pos,
                     base_price, disc_price, stock
                 ))
                 saved_count += 1
             except Exception as e:
-                print(f"[DB ERROR] {retailer}: {e}", flush=True)
+                print(f"[DB ERROR] {formatted_retailer}: {e}", flush=True)
                 conn.rollback()
                 continue
     conn.commit()
@@ -102,6 +103,43 @@ async def run_vtex_scraping(conn):
                 print(f"[SCRAPING ERROR] {retailer} '{term}': {e}", flush=True)
 
     return total_saved
+
+
+async def run_farmatodo_scraping(conn):
+    search_configs = []
+    with conn.cursor() as cur:
+        cur.execute("SELECT search_term FROM search_configs;")
+        rows = cur.fetchall()
+        search_configs = [r["search_term"] for r in rows] if rows else []
+
+    if not search_configs:
+        print("[FARMATODO SCRAPING] No hay términos en search_configs.", flush=True)
+        return 0
+
+    total_saved = 0
+    from app.services.scrapers.farmatodo_scraper import FarmatodoScraper
+
+    print("\n[SCRAPING] Iniciando extracción para: FARMATODO", flush=True)
+    scraper = FarmatodoScraper()
+    for term in search_configs:
+        try:
+            results = await scraper.search_keyword(term, limit=50)
+            if results:
+                count = save_scraper_results(conn, results, retailer="farmatodo")
+                total_saved += count
+                print(f"[FARMATODO] Guardados {count} para '{term}'.", flush=True)
+            else:
+                print(f"[FARMATODO] Sin resultados para '{term}'.", flush=True)
+        except Exception as e:
+            print(f"[SCRAPING ERROR] FARMATODO '{term}': {e}", flush=True)
+
+    return total_saved
+
+
+async def run_all_scraping(conn):
+    vtex_total = await run_vtex_scraping(conn)
+    farmatodo_total = await run_farmatodo_scraping(conn)
+    return vtex_total + farmatodo_total
 
 
 class SearchConfigCreate(BaseModel):
@@ -224,10 +262,10 @@ def get_results(
 async def trigger_now():
     conn = get_db_connection()
     try:
-        total_records = await run_vtex_scraping(conn)
+        total_records = await run_all_scraping(conn)
         return {
             "status": "success",
-            "message": f"Monitoreo ejecutado correctamente en Éxito y Carulla. {total_records} productos guardados.",
+            "message": f"Monitoreo ejecutado correctamente en Éxito, Carulla y Farmatodo. {total_records} productos guardados.",
             "total_records": total_records
         }
     except Exception as e:
