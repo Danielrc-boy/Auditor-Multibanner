@@ -266,8 +266,9 @@ def get_results(
     cursor = conn.cursor()
     query = """
         SELECT 
-            id, retailer, search_term, product_name, brand, position,
-            price, discount_price, is_available,
+            id, retailer, search_term, product_name, 
+            COALESCE(brand, 'Sin Marca') AS brand, 
+            position, price, discount_price, is_available,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results 
         WHERE 1=1
@@ -323,7 +324,14 @@ def export_results(
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    query_tendencia = "SELECT * FROM scraper_results WHERE 1=1"
+    query_tendencia = """
+        SELECT 
+            id, retailer, search_term, product_name, 
+            COALESCE(brand, 'Sin Marca') AS brand, 
+            position, price, discount_price, is_available,
+            (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
+        FROM scraper_results WHERE 1=1
+    """
     params = []
     if retailer:
         query_tendencia += " AND retailer ILIKE %s"
@@ -338,7 +346,7 @@ def export_results(
         query_tendencia += " AND captured_at <= %s"
         params.append(date_to)
 
-    query_tendencia += " ORDER BY captured_at DESC;"
+    query_tendencia += " ORDER BY id DESC;"
     cursor.execute(query_tendencia, tuple(params))
     rows_tendencia = cursor.fetchall()
 
@@ -351,7 +359,11 @@ def export_results(
         )
 
     query_resumen = """
-        SELECT DISTINCT ON (retailer, search_term, product_name) *
+        SELECT DISTINCT ON (retailer, search_term, product_name)
+            id, retailer, search_term, product_name, 
+            COALESCE(brand, 'Sin Marca') AS brand, 
+            position, price, discount_price, is_available,
+            (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results
         WHERE 1=1
     """
@@ -369,7 +381,7 @@ def export_results(
         query_resumen += " AND captured_at <= %s"
         params_resumen.append(date_to)
 
-    query_resumen += " ORDER BY retailer, search_term, product_name, captured_at DESC;"
+    query_resumen += " ORDER BY retailer, search_term, product_name, id DESC;"
     cursor.execute(query_resumen, tuple(params_resumen))
     rows_resumen = cursor.fetchall()
 

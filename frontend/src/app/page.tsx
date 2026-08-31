@@ -17,7 +17,6 @@ import {
   Trash2
 } from "lucide-react";
 
-// Types
 interface Retailer {
   id: string;
   code: string;
@@ -55,7 +54,6 @@ export default function Dashboard() {
   const [keyword, setKeyword] = useState("");
   const [selectedRetailerId, setSelectedRetailerId] = useState("");
 
-  // Estados de la Tabla de Resultados y Filtros
   const [results, setResults] = useState<ScraperResult[]>([]);
   const [loadingResults, setLoadingResults] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -114,7 +112,7 @@ export default function Dashboard() {
   useEffect(() => {
     fetchData();
     loadResults();
-  }, []);
+  }, [loadResults]);
 
   const triggerMonitoring = async () => {
     setLoading(true);
@@ -142,9 +140,7 @@ export default function Dashboard() {
       const res = await fetch(`${API_URL}/configs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          search_term: keyword
-        })
+        body: JSON.stringify({ search_term: keyword })
       });
 
       if (!res.ok) throw new Error("Error al guardar en la base de datos");
@@ -159,9 +155,7 @@ export default function Dashboard() {
 
   const toggleConfigStatus = async (id: string) => {
     try {
-      const res = await fetch(`${API_URL}/configs/${id}/toggle`, {
-        method: "PATCH",
-      });
+      const res = await fetch(`${API_URL}/configs/${id}/toggle`, { method: "PATCH" });
       if (!res.ok) throw new Error("Error al cambiar el estado");
       fetchData();
     } catch (err) {
@@ -173,9 +167,7 @@ export default function Dashboard() {
   const deleteConfig = async (id: string) => {
     if (!confirm("¿Estás seguro de que deseas eliminar esta búsqueda?")) return;
     try {
-      const res = await fetch(`${API_URL}/configs/${id}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(`${API_URL}/configs/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Error al eliminar");
       fetchData();
     } catch (err) {
@@ -242,7 +234,6 @@ export default function Dashboard() {
         </button>
       </header>
 
-      {/* Grid KPI Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 flex items-center gap-4">
           <Store className="text-blue-400 w-10 h-10" />
@@ -267,7 +258,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Form & List Container */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -347,7 +337,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* --- SECCIÓN ANALÍTICA: TABLA Y EXPORTACIÓN --- */}
       <section className="space-y-6 pt-6 border-t border-slate-800">
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 shadow-lg">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
@@ -427,7 +416,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* KPIs dinámicos sobre resultados */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-slate-800 border border-slate-700 p-4 rounded-xl flex items-center gap-4">
             <div className="p-3 bg-emerald-500/10 text-emerald-400 rounded-lg">
@@ -460,7 +448,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Tabla de Resultados en tiempo real */}
         <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden shadow-lg">
           <div className="p-4 border-b border-slate-700 flex justify-between items-center">
             <h3 className="font-bold text-slate-200">Resultados Extraídos (Anaquel Digital)</h3>
@@ -502,6 +489,17 @@ export default function Dashboard() {
                     const hasDiscount = row.discount_price && row.discount_price < row.price;
                     const finalPrice = hasDiscount ? row.discount_price! : row.price;
 
+                    const dateObj = new Date(row.captured_at);
+                    const formattedDate = isNaN(dateObj.getTime())
+                      ? String(row.captured_at).replace("T", " ").slice(0, 16)
+                      : dateObj.toLocaleString("es-CO", {
+                          day: "2-digit",
+                          month: "short",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: true,
+                        });
+
                     return (
                       <tr key={row.id} className="hover:bg-slate-700/30 transition-colors">
                         <td className="px-4 py-3 font-medium text-slate-200">
@@ -511,7 +509,7 @@ export default function Dashboard() {
                         </td>
                         <td className="px-4 py-3 text-slate-400">{row.search_term}</td>
                         <td className="px-4 py-3 font-semibold text-emerald-400">#{row.position}</td>
-                        <td className="px-4 py-3 text-slate-300 font-medium">{row.brand || "-"}</td>
+                        <td className="px-4 py-3 text-slate-200 font-semibold">{row.brand || "Sin Marca"}</td>
                         <td className="px-4 py-3 max-w-xs truncate font-medium text-slate-100" title={row.product_name}>
                           {row.product_name}
                         </td>
@@ -526,15 +524,19 @@ export default function Dashboard() {
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-xs text-slate-400">
-                          {new Date(row.captured_at).toLocaleString("es-CO", {
-                            timeZone: "America/Bogota",
-                            day: "2-digit",
-                            month: "short",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            hour12: true
-                          })}
+                        <td className="px-4 py-3 text-xs">
+                          {row.is_available ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
+                              <CheckCircle className="w-3.5 h-3.5" /> Disponible
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-rose-400 font-medium">
+                              <XCircle className="w-3.5 h-3.5" /> Agotado
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">
+                          {formattedDate}
                         </td>
                       </tr>
                     );
