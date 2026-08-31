@@ -11,7 +11,7 @@ RETAILER_URLS = {
 SCRAPERAPI_KEY = os.getenv("SCRAPER_API_KEY") or os.getenv("SCRAPERAPI_KEY")
 
 class ExtractedProductData:
-    """Objeto que encapsula los campos requeridos por main.py"""
+    """Esquema desacoplado y seguro con defaults para evitar fallos en cascada"""
     def __init__(
         self, 
         search_keyword: str, 
@@ -25,7 +25,7 @@ class ExtractedProductData:
         self.search_keyword = search_keyword
         self.search_position = search_position
         self.title = title
-        self.brand = brand
+        self.brand = brand if brand and str(brand).strip() not in ["", "None", "null"] else "Sin Marca"
         self.base_price = base_price
         self.discount_price = discount_price
         self.in_stock = in_stock
@@ -37,12 +37,9 @@ class VTEXScraper:
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
         encoded_term = urllib.parse.quote(search_term)
-        target_url = (
-            f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_term}"
-            f"?_from=0&_to={limit - 1}"
-        )
+        target_url = f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_term}?_from=0&_to={limit - 1}"
 
-        if self.retailer == "exito" and SCRAPERAPI_KEY:
+        if SCRAPERAPI_KEY:
             request_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}"
             headers = {"Accept": "application/json"}
         else:
@@ -69,20 +66,12 @@ class VTEXScraper:
 
         for index, item in enumerate(raw_items, start=1):
             try:
-                # --- PASO 2: LOG DE EVIDENCIA CRUDA ---
-                if index == 1:
-                    print(f"[DEBUG {self.retailer.upper()}] {item}", flush=True)
-
                 items_list = item.get("items", [])
                 if not items_list:
                     continue
 
-                first_item = items_list[0]
-                sellers = first_item.get("sellers", [])
-
-                price = 0.0
-                list_price = 0.0
-                available = True
+                sellers = items_list[0].get("sellers", [])
+                price, list_price, available = 0.0, 0.0, True
 
                 if sellers:
                     comm_offer = sellers[0].get("commertialOffer", {})
@@ -90,23 +79,19 @@ class VTEXScraper:
                     list_price = float(comm_offer.get("ListPrice", price))
                     available = comm_offer.get("IsAvailable", True)
 
+                title_val = item.get("productName", "").strip() or "Sin título"
                 extracted_brand = item.get("brand") or item.get("brandName")
-                title_val = item.get("productName", "").strip()
 
-                if not extracted_brand or str(extracted_brand).strip() in ["", "None", "null"]:
-                    if title_val:
-                        first_word = title_val.split()[0]
-                        extracted_brand = first_word.capitalize()
-                    else:
-                        extracted_brand = "Sin Marca"
+                if not extracted_brand and title_val != "Sin título":
+                    extracted_brand = title_val.split()[0].capitalize()
 
                 product = ExtractedProductData(
                     search_keyword=search_term,
                     search_position=index,
-                    title=title_val if title_val else "Sin título",
-                    brand=str(extracted_brand).strip(),
+                    title=title_val,
+                    brand=str(extracted_brand).strip() if extracted_brand else "Sin Marca",
                     base_price=list_price if list_price > 0 else price,
-                    discount_price=price if (price > 0 and price < list_price) else None,
+                    discount_price=price if (0 < price < list_price) else None,
                     in_stock=available
                 )
                 parsed_results.append(product)

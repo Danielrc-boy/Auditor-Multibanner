@@ -142,16 +142,31 @@ async def run_rappi_scraping(conn):
 
 
 async def run_all_scraping(conn):
-    vtex_total = 0
+    total_records = 0
+
+    # 1. VTEX Scraper (Éxito y Carulla)
     try:
         from app.services.scrapers.vtex_scraper import run_vtex_scraping
-        vtex_total = await run_vtex_scraping(conn)
-    except ImportError:
-        pass
+        vtex_saved = await run_vtex_scraping(conn)
+        total_records += vtex_saved
+    except Exception as e:
+        print(f"[MAIN ERROR] VTEX Scraper: {e}", flush=True)
 
-    farmatodo_total = await run_farmatodo_scraping(conn)
-    rappi_total = await run_rappi_scraping(conn)
-    return vtex_total + farmatodo_total + rappi_total
+    # 2. Farmatodo Scraper
+    try:
+        farmatodo_saved = await run_farmatodo_scraping(conn)
+        total_records += farmatodo_saved
+    except Exception as e:
+        print(f"[MAIN ERROR] Farmatodo Scraper: {e}", flush=True)
+
+    # 3. Rappi Scraper
+    try:
+        rappi_saved = await run_rappi_scraping(conn)
+        total_records += rappi_saved
+    except Exception as e:
+        print(f"[MAIN ERROR] Rappi Scraper: {e}", flush=True)
+
+    return total_records
 
 
 class SearchConfigCreate(BaseModel):
