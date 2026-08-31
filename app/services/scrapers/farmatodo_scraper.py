@@ -1,6 +1,7 @@
 import os
 import re
 import urllib.parse
+import unicodedata
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
@@ -8,6 +9,13 @@ FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.f
 FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
 FARMATODO_API_KEY = os.getenv("ALGOLIA_API_KEY", "eb9544fe7bfe7ec4c1aa5e5bf7740feb")
 FARMATODO_INDEX_NAME = os.getenv("ALGOLIA_INDEX_NAME", "products-colombia")
+
+def normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    text = unicodedata.normalize('NFD', text)
+    text = re.sub(r'[\u0300-\u036f]', '', text)
+    return text.lower().strip()
 
 class FarmatodoScraper:
     def __init__(self):
@@ -54,11 +62,11 @@ class FarmatodoScraper:
         parsed_results = []
         valid_position = 1
         
-        # Ignorar conectores o unidades irrelevantes que ensucian la coincidencia
-        stopwords = {"para", "como", "con", "sin", "und", "units", "pack", "para"}
+        # Palabras clave normalizadas (sin tildes)
+        stopwords = {"para", "como", "con", "sin", "und", "units", "pack"}
         search_words = [
-            w.lower() for w in search_term.strip().split() 
-            if len(w) > 3 and w.lower() not in stopwords
+            normalize_text(w) for w in search_term.strip().split() 
+            if len(w) > 2 and normalize_text(w) not in stopwords
         ]
 
         for item in raw_hits:
@@ -68,16 +76,15 @@ class FarmatodoScraper:
                 if not title:
                     continue
 
-                title_lower = title.lower()
+                title_norm = normalize_text(title)
 
-                # FILTRO ESTRICTO: Exigir que al menos el 50% de las palabras clave principales de la búsqueda estén en el título
+                # Comparación flexible insensible a tildes
                 if search_words:
-                    matches = sum(1 for word in search_words if word in title_lower)
-                    # Si no coincide al menos la mitad de las palabras buscadas, descartar el hit irrelevante
-                    if matches < max(1, len(search_words) // 2):
+                    matches = sum(1 for word in search_words if word in title_norm)
+                    if matches == 0:
                         continue
 
-                # Extracción honesta de Marca
+                # Extracción de Marca
                 raw_brand = item.get("brand") or item.get("brandName") or item.get("marca") or item.get("brand_name")
                 if isinstance(raw_brand, dict):
                     raw_brand = raw_brand.get("name") or raw_brand.get("label")
