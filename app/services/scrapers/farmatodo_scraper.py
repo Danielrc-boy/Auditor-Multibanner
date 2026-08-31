@@ -1,8 +1,8 @@
 import os
+import re
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
-# Variables de Algolia capturadas del proxy oficial de Farmatodo
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("FARMATODO_APP_ID", "VCOJEYD2PO")
 FARMATODO_API_KEY = os.getenv("FARMATODO_API_KEY", "eb9544fe7bfe7ec4c1aa5e5bf7740feb")
@@ -36,7 +36,6 @@ class FarmatodoScraper:
                 response.raise_for_status()
                 data = response.json()
                 
-                # Algolia retorna una lista de resultados dentro de 'results'
                 results_list = data.get("results", [])
                 if not results_list:
                     return []
@@ -52,22 +51,31 @@ class FarmatodoScraper:
 
         for index, item in enumerate(hits, start=1):
             try:
-                # 1. Título real mapeado desde mediaDescription
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title_val = str(title_val).strip() if title_val else "Sin título"
 
-                # 2. Marca (extraída del campo o de la primera palabra del título)
+                # 1. Intentar obtener el campo de marca
                 extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
                 if isinstance(extracted_brand, dict):
                     extracted_brand = extracted_brand.get("name")
 
-                if not extracted_brand or str(extracted_brand).strip() in ["", "None", "null", "Sin Marca"]:
+                brand_str = str(extracted_brand).strip() if extracted_brand else ""
+
+                # 2. Si la marca viene vacía, nula o es un código tipo SKU (ej: 2008M-0008623), extraer del título
+                is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str)
+                if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
                     if title_val != "Sin título":
-                        extracted_brand = title_val.split()[0].capitalize()
+                        # Extraer la primera palabra o las palabras clave del producto como marca
+                        words = title_val.split()
+                        # Si el título empieza por tipo de producto (Agua, Bebida), tomar la siguiente palabra significativa
+                        if len(words) > 1 and words[0].lower() in ["agua", "bebida", "toallas", "protector", "crema", "shampoo"]:
+                            extracted_brand = words[1].capitalize()
+                        else:
+                            extracted_brand = words[0].capitalize()
                     else:
                         extracted_brand = "Sin Marca"
 
-                # 3. Mapeo de precios reales de Algolia
+                # 3. Mapeo de precios
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -77,7 +85,7 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # 4. Control de stock desde outofstore
+                # 4. Control de stock
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
