@@ -1,79 +1,93 @@
 import os
-import urllib.parse
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
-SCRAPERAPI_KEY = os.getenv("SCRAPER_API_KEY") or os.getenv("SCRAPERAPI_KEY")
+# Variables de Algolia capturadas del proxy oficial de Farmatodo
+FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
+FARMATODO_APP_ID = os.getenv("FARMATODO_APP_ID", "VCOJEYD2PO")
+FARMATODO_API_KEY = os.getenv("FARMATODO_API_KEY", "eb9544fe7bfe7ec4c1aa5e5bf7740feb")
+FARMATODO_INDEX_NAME = os.getenv("FARMATODO_INDEX_NAME", "products-colombia")
 
 class FarmatodoScraper:
     def __init__(self):
-        self.base_url = "https://www.farmatodo.com.co/api/v1/products/search"
-
-    async def search_keyword(self, search_term: str, limit: int = 50) -> list:
-        encoded_term = urllib.parse.quote(search_term)
-        target_url = f"{self.base_url}?query={encoded_term}&limit={limit}"
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-ES,es;q=0.9",
-            "Origin": "https://www.farmatodo.com.co",
-            "Referer": f"https://www.farmatodo.com.co/buscar?p={encoded_term}"
+        self.url = FARMATODO_ALGOLIA_URL
+        self.headers = {
+            "x-algolia-application-id": FARMATODO_APP_ID,
+            "x-algolia-api-key": FARMATODO_API_KEY,
+            "content-type": "application/json",
+            "origin": "https://www.farmatodo.com.co",
+            "referer": "https://www.farmatodo.com.co/",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         }
 
-        # Intento 1: Vía ScraperAPI con JS Rendering si está configurado
-        if SCRAPERAPI_KEY:
-            request_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}&keep_headers=true"
-        else:
-            request_url = target_url
+    async def search_keyword(self, search_term: str, limit: int = 50) -> list:
+        payload = {
+            "requests": [
+                {
+                    "indexName": FARMATODO_INDEX_NAME,
+                    "params": f"query={search_term}&hitsPerPage={limit}&page=0"
+                }
+            ]
+        }
 
-        async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             try:
-                response = await client.get(request_url, headers=headers)
-                
-                # Si falla o no es JSON, intentar con render=true
-                if response.status_code != 200 or not response.text.strip().startswith(("{", "[")):
-                    if SCRAPERAPI_KEY:
-                        retry_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}&render=true"
-                        response = await client.get(retry_url)
-
+                response = await client.post(self.url, json=payload, headers=self.headers)
                 response.raise_for_status()
                 data = response.json()
-                return self._parse_products(data, search_term)
+                
+                # Algolia retorna una lista de resultados dentro de 'results'
+                results_list = data.get("results", [])
+                if not results_list:
+                    return []
+                
+                hits = results_list[0].get("hits", [])
+                return self._parse_products(hits, search_term)
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{search_term}': {e}", flush=True)
                 return []
 
-    def _parse_products(self, data: dict, search_term: str) -> list:
+    def _parse_products(self, hits: list, search_term: str) -> list:
         parsed_results = []
-        
-        # Mapeo flexible por si la API devuelve estructura anidada en 'products' o 'data'
-        raw_items = []
-        if isinstance(data, dict):
-            raw_items = data.get("products") or data.get("data", {}).get("products") or []
-        elif isinstance(data, list):
-            raw_items = data
 
-        for index, item in enumerate(raw_items, start=1):
+        for index, item in enumerate(hits, start=1):
             try:
-                title_val = item.get("name") or item.get("description", "")
+                # 1. Título real mapeado desde mediaDescription
+                title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title_val = str(title_val).strip() if title_val else "Sin título"
-                
-                extracted_brand = item.get("brand") or item.get("brandName")
-                if not extracted_brand and title_val != "Sin título":
-                    extracted_brand = title_val.split()[0].capitalize()
 
-                price = float(item.get("price", 0.0))
-                disc_price = float(item.get("discountPrice", 0.0)) if item.get("discountPrice") else None
-                in_stock = bool(item.get("inStock", True))
+                # 2. Marca (extraída del campo o de la primera palabra del título)
+                extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
+                if isinstance(extracted_brand, dict):
+                    extracted_brand = extracted_brand.get("name")
+
+                if not extracted_brand or str(extracted_brand).strip() in ["", "None", "null", "Sin Marca"]:
+                    if title_val != "Sin título":
+                        extracted_brand = title_val.split()[0].capitalize()
+                    else:
+                        extracted_brand = "Sin Marca"
+
+                # 3. Mapeo de precios reales de Algolia
+                base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
+                offer_price = item.get("offerPrice")
+                
+                discount_price = None
+                if offer_price is not None:
+                    offer_val = float(offer_price)
+                    if 0 < offer_val < base_price:
+                        discount_price = offer_val
+
+                # 4. Control de stock desde outofstore
+                is_out_of_store = bool(item.get("outofstore", False))
+                in_stock = not is_out_of_store
 
                 product = ExtractedProductData(
                     search_keyword=search_term,
                     search_position=index,
                     title=title_val,
-                    brand=str(extracted_brand).strip() if extracted_brand else "Sin Marca",
-                    base_price=price,
-                    discount_price=disc_price,
+                    brand=str(extracted_brand).strip(),
+                    base_price=base_price,
+                    discount_price=discount_price,
                     in_stock=in_stock
                 )
                 parsed_results.append(product)
