@@ -57,7 +57,6 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                 title = getattr(item, "title", "") or ""
                 brand = getattr(item, "brand", None)
 
-                # Respaldo por nombre de producto si la marca viene nula o por defecto
                 if not brand or str(brand).strip() in ["", "None", "null", "Sin Marca"]:
                     if title.strip():
                         brand = title.strip().split()[0].capitalize()
@@ -289,10 +288,10 @@ def get_results(
         query += " AND search_term ILIKE %s"
         params.append(f"%{search_term}%")
     if date_from:
-        query += " AND captured_at >= %s"
+        query += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date >= %s::date"
         params.append(date_from)
     if date_to:
-        query += " AND captured_at <= %s"
+        query += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
         params.append(date_to)
     query += " ORDER BY id DESC LIMIT %s;"
     params.append(limit)
@@ -348,10 +347,10 @@ def export_results(
         query_tendencia += " AND search_term ILIKE %s"
         params.append(f"%{search_term}%")
     if date_from:
-        query_tendencia += " AND captured_at >= %s"
+        query_tendencia += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date >= %s::date"
         params.append(date_from)
     if date_to:
-        query_tendencia += " AND captured_at <= %s"
+        query_tendencia += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
         params.append(date_to)
 
     query_tendencia += " ORDER BY id DESC;"
@@ -383,10 +382,10 @@ def export_results(
         query_resumen += " AND search_term ILIKE %s"
         params_resumen.append(f"%{search_term}%")
     if date_from:
-        query_resumen += " AND captured_at >= %s"
+        query_resumen += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date >= %s::date"
         params_resumen.append(date_from)
     if date_to:
-        query_resumen += " AND captured_at <= %s"
+        query_resumen += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
         params_resumen.append(date_to)
 
     query_resumen += " ORDER BY retailer, search_term, product_name, id DESC;"

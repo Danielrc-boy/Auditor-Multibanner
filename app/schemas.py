@@ -1,7 +1,5 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
-from uuid import UUID
 
 class ExtractedProductData(BaseModel):
     search_keyword: str
