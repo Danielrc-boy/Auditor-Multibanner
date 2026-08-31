@@ -1,5 +1,4 @@
 import os
-import re
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
@@ -57,27 +56,16 @@ class FarmatodoScraper:
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title_val = str(title_val).strip() if title_val else "Sin título"
 
-                # 2. Marca (extraída del campo o ajustada si es un código de proveedor)
+                # 2. Marca (extraída del campo o de la primera palabra del título)
                 extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
                 if isinstance(extracted_brand, dict):
                     extracted_brand = extracted_brand.get("name")
 
-                brand_str = str(extracted_brand).strip() if extracted_brand else ""
-
-                # Detectar si es un código de proveedor (contiene dígitos y guiones, o empieza por 2008)
-                is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str) or brand_str.startswith("2008")
-
-                # Si no hay marca, o es un valor genérico / código numérico:
-                if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
-                    # Prioridad A: Si el término buscado está en el título, esa es la marca
-                    if search_term.lower() in title_val.lower():
-                        extracted_brand = search_term.capitalize()
-                    elif title_val != "Sin título":
+                if not extracted_brand or str(extracted_brand).strip() in ["", "None", "null", "Sin Marca"]:
+                    if title_val != "Sin título":
                         extracted_brand = title_val.split()[0].capitalize()
                     else:
                         extracted_brand = "Sin Marca"
-                else:
-                    extracted_brand = brand_str
 
                 # 3. Mapeo de precios reales de Algolia
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
