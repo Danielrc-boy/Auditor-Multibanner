@@ -37,44 +37,38 @@ def get_db_connection():
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
 
---- a/app/main.py
-+++ b/app/main.py
-@@ -35,10 +35,10 @@ def get_db_connection():
+def save_scraper_results(conn, results: list, retailer: str) -> int:
+    if not results:
+        return 0
+    insert_query = """
+        INSERT INTO scraper_results (
+            retailer, search_term, product_name, brand, position,
+            price, discount_price, is_available
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+    """
+    saved_count = 0
+    formatted_retailer = retailer.capitalize() if retailer else "Unknown"
+    with conn.cursor() as cur:
+        for item in results:
+            try:
+                term = getattr(item, "search_keyword", None)
+                pos = getattr(item, "search_position", None)
+                title = getattr(item, "title", None)
+                brand = getattr(item, "brand", None)
+                base_price = getattr(item, "base_price", 0.0)
+                disc_price = getattr(item, "discount_price", None)
+                stock = getattr(item, "in_stock", True)
+                cur.execute(insert_query, (
+                    formatted_retailer, term, title, brand, pos,
+                    base_price, disc_price, stock
+                ))
+                saved_count += 1
+            except Exception as e:
+                print(f"[DB ERROR] {formatted_retailer}: {e}", flush=True)
 
- def save_scraper_results(conn, results: list, retailer: str) -> int:
-     if not results:
-         return 0
-     insert_query = """
-         INSERT INTO scraper_results (
--            retailer, search_term, product_name, position,
-+            retailer, search_term, product_name, brand, position,
-             price, discount_price, is_available
-         )
--        VALUES (%s, %s, %s, %s, %s, %s, %s);
-+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
-     """
-     saved_count = 0
-     formatted_retailer = retailer.capitalize() if retailer else "Unknown"
-     with conn.cursor() as cur:
-         for item in results:
-             try:
-                 term = getattr(item, "search_keyword", None)
-                 pos = getattr(item, "search_position", None)
-                 title = getattr(item, "title", None)
-+                brand = getattr(item, "brand", None)
-                 base_price = getattr(item, "base_price", 0.0)
-                 disc_price = getattr(item, "discount_price", None)
-                 stock = getattr(item, "in_stock", True)
-                 cur.execute(insert_query, (
--                    formatted_retailer, term, title, pos,
-+                    formatted_retailer, term, title, brand, pos,
-                     base_price, disc_price, stock
-                 ))
-                 saved_count += 1
-             except Exception as e:
-                 print(f"[DB ERROR] {formatted_retailer}: {e}", flush=True)
-
-    return total_saved
+    conn.commit()
+    return saved_count
 
 
 async def run_farmatodo_scraping(conn):
@@ -123,7 +117,6 @@ async def run_rappi_scraping(conn):
     from app.services.scrapers.rappi_scraper import RappiScraper
 
     print("\n[SCRAPING] Iniciando extracción para: RAPPI", flush=True)
-    # INSTANCIA ÚNICA: Reutiliza token/sesión de Rappi para evitar errores 401 y 429
     scraper = RappiScraper()
 
     for term in search_configs:
@@ -142,7 +135,14 @@ async def run_rappi_scraping(conn):
 
 
 async def run_all_scraping(conn):
-    vtex_total = await run_vtex_scraping(conn)
+    # Declaración segura de vtex_total si existe el módulo
+    vtex_total = 0
+    try:
+        from app.services.scrapers.vtex_scraper import run_vtex_scraping
+        vtex_total = await run_vtex_scraping(conn)
+    except ImportError:
+        pass
+
     farmatodo_total = await run_farmatodo_scraping(conn)
     rappi_total = await run_rappi_scraping(conn)
     return vtex_total + farmatodo_total + rappi_total
