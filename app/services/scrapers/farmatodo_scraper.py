@@ -54,8 +54,12 @@ class FarmatodoScraper:
         parsed_results = []
         valid_position = 1
         
-        # Palabras obligatorias del termino buscado
-        search_words = [w.lower() for w in search_term.strip().split() if len(w) > 2]
+        # Ignorar conectores o unidades irrelevantes que ensucian la coincidencia
+        stopwords = {"para", "como", "con", "sin", "und", "units", "pack", "para"}
+        search_words = [
+            w.lower() for w in search_term.strip().split() 
+            if len(w) > 3 and w.lower() not in stopwords
+        ]
 
         for item in raw_hits:
             try:
@@ -64,12 +68,16 @@ class FarmatodoScraper:
                 if not title:
                     continue
 
-                # FILTRO ANTI-BASURA: Si Algolia trae un producto sin relacion con el termino, se descarta
                 title_lower = title.lower()
-                if search_words and not any(word in title_lower for word in search_words):
-                    continue
 
-                # EXTRACCION HONESTA DE MARCA
+                # FILTRO ESTRICTO: Exigir que al menos el 50% de las palabras clave principales de la búsqueda estén en el título
+                if search_words:
+                    matches = sum(1 for word in search_words if word in title_lower)
+                    # Si no coincide al menos la mitad de las palabras buscadas, descartar el hit irrelevante
+                    if matches < max(1, len(search_words) // 2):
+                        continue
+
+                # Extracción honesta de Marca
                 raw_brand = item.get("brand") or item.get("brandName") or item.get("marca") or item.get("brand_name")
                 if isinstance(raw_brand, dict):
                     raw_brand = raw_brand.get("name") or raw_brand.get("label")

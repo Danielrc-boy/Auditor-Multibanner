@@ -111,29 +111,34 @@ class VTEXScraper:
 async def run_vtex_scraping(conn) -> int:
     search_configs = []
     with conn.cursor() as cur:
-        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
+        # Filtrar explícitamente las búsquedas activas y su retailer correspondiente
+        cur.execute("SELECT search_term, retailer FROM search_configs WHERE is_active = TRUE;")
         rows = cur.fetchall()
-        search_configs = [r["search_term"] for r in rows] if rows else []
+        search_configs = rows if rows else []
 
     if not search_configs:
-        search_configs = ["leche"]
+        return 0
 
     total_saved = 0
     from app.main import save_scraper_results
 
-    for retailer in ["exito", "carulla"]:
-        print(f"\n[SCRAPING] Iniciando extracción VTEX para: {retailer.upper()}", flush=True)
-        scraper = VTEXScraper(retailer=retailer)
-        for term in search_configs:
+    for config in search_configs:
+        term = config["search_term"]
+        target_retailer = (config.get("retailer") or "exito").lower()
+
+        # Omitir si la búsqueda está configurada exclusivamente para Farmatodo
+        if target_retailer == "farmatodo":
+            continue
+
+        if target_retailer in ["exito", "carulla"]:
+            scraper = VTEXScraper(retailer=target_retailer)
             try:
                 results = await scraper.search_keyword(term, limit=50)
                 if results:
-                    count = save_scraper_results(conn, results, retailer=retailer)
+                    count = save_scraper_results(conn, results, retailer=target_retailer)
                     total_saved += count
-                    print(f"[{retailer.upper()}] Guardados {count} para '{term}'.", flush=True)
-                else:
-                    print(f"[{retailer.upper()}] Sin resultados para '{term}'.", flush=True)
+                    print(f"[{target_retailer.upper()}] Guardados {count} para '{term}'.", flush=True)
             except Exception as e:
-                print(f"[SCRAPING ERROR] {retailer.upper()} '{term}': {e}", flush=True)
+                print(f"[SCRAPING ERROR] {target_retailer.upper()} '{term}': {e}", flush=True)
 
     return total_saved
