@@ -1,6 +1,5 @@
 import os
 import re
-import urllib.parse
 import unicodedata
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
@@ -10,20 +9,11 @@ FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
 FARMATODO_API_KEY = os.getenv("ALGOLIA_API_KEY", "eb9544fe7bfe7ec4c1aa5e5bf7740feb")
 FARMATODO_INDEX_NAME = os.getenv("ALGOLIA_INDEX_NAME", "products-colombia")
 
-FARMATODO_PRODUCT_API = "https://api.farmatodo.com.co/api/v1/product/detail/co"
-
 KNOWN_BRANDS = [
     "Nosotras", "Kotex", "Stayfree", "Pequeñín", "Winny", "Farmatodo",
     "Huggies", "Pampers", "Nivea", "Dove", "Protex", "Saba", "Tena",
     "Gillette", "Colgate", "Sensodyne", "Neutrogena", "Cetaphil"
 ]
-
-def normalize_text(text: str) -> str:
-    if not text:
-        return ""
-    text = unicodedata.normalize('NFD', text)
-    text = re.sub(r'[\u0300-\u036f]', '', text)
-    return text.lower().strip()
 
 class FarmatodoScraper:
     def __init__(self):
@@ -59,7 +49,7 @@ class FarmatodoScraper:
                     return []
                 
                 hits = results[0].get("hits", [])
-                return await self._parse_products(client, hits, clean_term)
+                return self._parse_products(hits, clean_term)
 
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{clean_term}': {e}", flush=True)
@@ -88,29 +78,55 @@ class FarmatodoScraper:
 
         return "Sin Marca"
 
-    async def _fetch_live_prices(self, client: httpx.AsyncClient, item_id: str) -> tuple[float, float | None]:
-        """Consulta la API de detalle para obtener el precio dinámico real con descuento."""
-        if not item_id:
-            return 0.0, None
+    def _extract_prices(self, item: dict) -> tuple[float, float | None]:
+        """
+        Extracción precisa de Algolia para Farmatodo:
+        - `fullPrice`: Precio regular sin descuento.
+        - `price`: Precio final tras aplicar ofertas activas en la base de datos de Algolia.
+        """
+        base_price = 0.0
+        discount_price = None
+
+        # 1. Lectura de campos de precio directo de Algolia
+        raw_full = item.get("fullPrice")
+        raw_current = item.get("price")
 
         try:
-            url = f"{FARMATODO_PRODUCT_API}/{item_id}"
-            resp = await client.get(url, headers={"User-Agent": self.headers["User-Agent"]}, timeout=5.0)
-            if resp.status_code == 200:
-                detail = resp.json()
-                price_data = detail.get("price", {}) or detail
-                
-                base = float(price_data.get("fullPrice") or price_data.get("price") or 0.0)
-                offer = price_data.get("offerPrice") or price_data.get("priceWithDiscount")
-                
-                discount = float(offer) if offer and float(offer) < base else None
-                return base, discount
-        except Exception:
+            full_val = float(raw_full) if raw_full is not None else 0.0
+            current_val = float(raw_current) if raw_current is not None else 0.0
+
+            if full_val > 0 and current_val > 0:
+                if current_val < full_val:
+                    base_price = full_val
+                    discount_price = current_val
+                else:
+                    base_price = full_val
+            elif current_val > 0:
+                base_price = current_val
+            elif full_val > 0:
+                base_price = full_val
+
+        except (ValueError, TypeError):
             pass
 
-        return 0.0, None
+        # 2. Si el descuento viene especificado como un porcentaje de promoción en el objeto `promotions`
+        if discount_price is None and base_price > 0:
+            promotions = item.get("promotions")
+            if isinstance(promotions, list) and len(promotions) > 0:
+                promo = promotions[0]
+                if isinstance(promo, dict):
+                    percent = promo.get("percent") or promo.get("discount") or promo.get("value")
+                    try:
+                        pct = float(percent)
+                        if pct > 0:
+                            pct_factor = pct / 100.0 if pct > 1 else pct
+                            discount_price = round(base_price * (1.0 - pct_factor), 2)
+                    except (ValueError, TypeError):
+                        pass
 
-    async def _parse_products(self, client: httpx.AsyncClient, raw_hits: list, search_term: str) -> list:
+        return base_price, discount_price
+
+    def _parse_products(self, raw_hits: list, search_term: str) -> list:
         parsed_results = []
         valid_position = 1
 
@@ -122,18 +138,7 @@ class FarmatodoScraper:
                     continue
 
                 final_brand = self._extract_brand(item, title)
-
-                # 1. Obtener precio base inicial de Algolia
-                base_price = float(item.get("fullPrice") or item.get("price") or 0.0)
-                discount_price = None
-
-                # 2. Consultar precio real descontado desde la API directa de productos
-                item_id = item.get("objectID") or item.get("id")
-                if item_id:
-                    live_base, live_discount = await self._fetch_live_prices(client, str(item_id))
-                    if live_base > 0:
-                        base_price = live_base
-                        discount_price = live_discount
+                base_price, discount_price = self._extract_prices(item)
 
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
