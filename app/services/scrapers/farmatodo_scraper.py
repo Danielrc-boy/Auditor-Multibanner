@@ -12,20 +12,31 @@ class FarmatodoScraper:
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
         encoded_term = urllib.parse.quote(search_term)
         target_url = f"{self.base_url}?query={encoded_term}&limit={limit}"
-        
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "es-ES,es;q=0.9",
+            "Origin": "https://www.farmatodo.com.co",
+            "Referer": f"https://www.farmatodo.com.co/buscar?p={encoded_term}"
+        }
+
+        # Intento 1: Vía ScraperAPI con JS Rendering si está configurado
         if SCRAPERAPI_KEY:
-            request_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}"
-            headers = {"Accept": "application/json"}
+            request_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}&keep_headers=true"
         else:
             request_url = target_url
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json"
-            }
 
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
             try:
                 response = await client.get(request_url, headers=headers)
+                
+                # Si falla o no es JSON, intentar con render=true
+                if response.status_code != 200 or not response.text.strip().startswith(("{", "[")):
+                    if SCRAPERAPI_KEY:
+                        retry_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}&render=true"
+                        response = await client.get(retry_url)
+
                 response.raise_for_status()
                 data = response.json()
                 return self._parse_products(data, search_term)
@@ -35,13 +46,20 @@ class FarmatodoScraper:
 
     def _parse_products(self, data: dict, search_term: str) -> list:
         parsed_results = []
-        raw_items = data.get("products", []) if isinstance(data, dict) else []
+        
+        # Mapeo flexible por si la API devuelve estructura anidada en 'products' o 'data'
+        raw_items = []
+        if isinstance(data, dict):
+            raw_items = data.get("products") or data.get("data", {}).get("products") or []
+        elif isinstance(data, list):
+            raw_items = data
 
         for index, item in enumerate(raw_items, start=1):
             try:
-                title_val = item.get("name", "").strip() or "Sin título"
+                title_val = item.get("name") or item.get("description", "")
+                title_val = str(title_val).strip() if title_val else "Sin título"
+                
                 extracted_brand = item.get("brand") or item.get("brandName")
-
                 if not extracted_brand and title_val != "Sin título":
                     extracted_brand = title_val.split()[0].capitalize()
 
