@@ -30,6 +30,10 @@ class FarmatodoScraper:
 
         for index, item in enumerate(raw_items, start=1):
             try:
+                # --- PASO 2: LOG DE EVIDENCIA CRUDA ---
+                if index == 1:
+                    print(f"[DEBUG FARMATODO] {item}", flush=True)
+
                 title_val = item.get("name", "").strip()
                 extracted_brand = item.get("brand") or item.get("brandName")
 

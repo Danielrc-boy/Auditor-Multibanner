@@ -1,5 +1,6 @@
 import os
 import urllib.parse
+from typing import Optional
 import httpx
 
 RETAILER_URLS = {
@@ -16,9 +17,9 @@ class ExtractedProductData:
         search_keyword: str, 
         search_position: int, 
         title: str, 
-        brand: str = "Sin Marca", 
+        brand: Optional[str] = "Sin Marca", 
         base_price: float = 0.0, 
-        discount_price: float = None, 
+        discount_price: Optional[float] = None, 
         in_stock: bool = True
     ):
         self.search_keyword = search_keyword
@@ -68,8 +69,9 @@ class VTEXScraper:
 
         for index, item in enumerate(raw_items, start=1):
             try:
+                # --- PASO 2: LOG DE EVIDENCIA CRUDA ---
                 if index == 1:
-                    print(f"[DEBUG ITEM COMPLETO] {item}", flush=True)
+                    print(f"[DEBUG {self.retailer.upper()}] {item}", flush=True)
 
                 items_list = item.get("items", [])
                 if not items_list:
