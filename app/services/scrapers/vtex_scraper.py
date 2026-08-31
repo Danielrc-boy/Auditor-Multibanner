@@ -11,7 +11,6 @@ RETAILER_URLS = {
 SCRAPERAPI_KEY = os.getenv("SCRAPER_API_KEY") or os.getenv("SCRAPERAPI_KEY")
 
 class ExtractedProductData:
-    """Esquema desacoplado y seguro con defaults para evitar fallos en cascada"""
     def __init__(
         self, 
         search_keyword: str, 
@@ -112,7 +111,7 @@ async def run_vtex_scraping(conn) -> int:
         search_configs = ["leche"]
 
     total_saved = 0
-    from main import save_scraper_results
+    from app.main import save_scraper_results
 
     for retailer in ["exito", "carulla"]:
         print(f"\n[SCRAPING] Iniciando extracción VTEX para: {retailer.upper()}", flush=True)
