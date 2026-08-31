@@ -3,6 +3,7 @@ import re
 import urllib.parse
 import unicodedata
 import httpx
+import json
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
@@ -57,6 +58,14 @@ class FarmatodoScraper:
                     return []
                 
                 hits = results[0].get("hits", [])
+
+                # PRINT DE DEPURACIÓN: Inspeccionar estructura exacta del primer item
+                if hits:
+                    print("\n" + "="*50, flush=True)
+                    print(f"[DEBUG FARMATODO] Estructura JSON para '{clean_term}':", flush=True)
+                    print(json.dumps(hits[0], indent=2, ensure_ascii=False), flush=True)
+                    print("="*50 + "\n", flush=True)
+
                 return self._parse_products(hits, clean_term)
 
             except Exception as e:
@@ -87,12 +96,10 @@ class FarmatodoScraper:
         return "Sin Marca"
 
     def _safe_float(self, val) -> float | None:
-        """Convierte de forma segura strings, enteros o floats a float puro."""
         if val is None or val == "":
             return None
         try:
             if isinstance(val, str):
-                # Eliminar símbolos de moneda o espacios si los hay
                 val = re.sub(r'[^\d.]', '', val.replace(',', '.'))
             res = float(val)
             return res if res > 0 else None
@@ -100,15 +107,11 @@ class FarmatodoScraper:
             return None
 
     def _extract_prices(self, item: dict) -> tuple[float, float | None]:
-        """Extrae el precio base y el precio de descuento escaneando múltiples estructuras posibles."""
-        
-        # 1. Obtener objeto o valor principal de precio
         raw_price_obj = item.get("price")
         
         base_price = 0.0
         offer_price = None
 
-        # Si 'price' viene como diccionario (Estructura anidada en algunas versiones de Algolia)
         if isinstance(raw_price_obj, dict):
             base_price = self._safe_float(raw_price_obj.get("base") or raw_price_obj.get("full") or raw_price_obj.get("regular")) or 0.0
             offer_price = self._safe_float(raw_price_obj.get("offer") or raw_price_obj.get("discount") or raw_price_obj.get("special"))
@@ -116,7 +119,6 @@ class FarmatodoScraper:
             base_price = self._safe_float(item.get("fullPrice") or item.get("price") or item.get("originalPrice") or item.get("regularPrice")) or 0.0
             offer_price = self._safe_float(item.get("offerPrice") or item.get("priceWithDiscount") or item.get("discountPrice") or item.get("finalPrice") or item.get("specialPrice"))
 
-        # 2. Revisar arreglos de promociones/descuentos si no se halló oferta directa
         if not offer_price:
             promos = item.get("promotions") or item.get("discounts") or item.get("offers")
             if isinstance(promos, list) and len(promos) > 0:
@@ -124,26 +126,22 @@ class FarmatodoScraper:
                 if isinstance(first_promo, dict):
                     offer_price = self._safe_float(first_promo.get("price") or first_promo.get("offerPrice") or first_promo.get("specialPrice"))
                     
-                    # Si no viene precio en el objeto promo pero sí porcentaje
                     if not offer_price and base_price > 0:
                         pct = self._safe_float(first_promo.get("percent") or first_promo.get("percentage") or first_promo.get("value"))
                         if pct:
                             pct_val = pct / 100.0 if pct > 1 else pct
                             offer_price = round(base_price * (1.0 - pct_val), 2)
 
-        # 3. Revisar porcentaje directo en la raíz del producto
         if not offer_price and base_price > 0:
             pct = self._safe_float(item.get("discountPercent") or item.get("discount_percent") or item.get("percentage") or item.get("discount"))
             if pct:
                 pct_val = pct / 100.0 if pct > 1 else pct
                 offer_price = round(base_price * (1.0 - pct_val), 2)
 
-        # 4. Validaciones finales
         discount_price = None
-        if offer_price and 0 < offer_price < base_price:
+        if offer_price and 0 < offer_val < base_price:
             discount_price = offer_price
         elif offer_price and offer_price > base_price:
-            # Caso donde los precios vienen invertidos en la API
             discount_price = base_price
             base_price = offer_price
 
