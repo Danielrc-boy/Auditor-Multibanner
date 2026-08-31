@@ -1,12 +1,23 @@
 import os
+import re
+import unicodedata
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
-# Variables de Algolia capturadas del proxy oficial de Farmatodo
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("FARMATODO_APP_ID", "VCOJEYD2PO")
 FARMATODO_API_KEY = os.getenv("FARMATODO_API_KEY", "eb9544fe7bfe7ec4c1aa5e5bf7740feb")
 FARMATODO_INDEX_NAME = os.getenv("FARMATODO_INDEX_NAME", "products-colombia")
+
+
+def _normalize_text(text: str) -> str:
+    """Remueve tildes y convierte a minúsculas para comparaciones precisas."""
+    if not text:
+        return ""
+    text = unicodedata.normalize('NFD', text)
+    text = re.sub(r'[\u0300-\u036f]', '', text)
+    return text.lower().strip()
+
 
 class FarmatodoScraper:
     def __init__(self):
@@ -21,11 +32,13 @@ class FarmatodoScraper:
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
+        params_str = f"query={search_term.strip()}&hitsPerPage={limit}&page=0"
+
         payload = {
             "requests": [
                 {
                     "indexName": FARMATODO_INDEX_NAME,
-                    "params": f"query={search_term}&hitsPerPage={limit}&page=0"
+                    "params": params_str
                 }
             ]
         }
@@ -36,7 +49,6 @@ class FarmatodoScraper:
                 response.raise_for_status()
                 data = response.json()
                 
-                # Algolia retorna una lista de resultados dentro de 'results'
                 results_list = data.get("results", [])
                 if not results_list:
                     return []
@@ -49,25 +61,40 @@ class FarmatodoScraper:
 
     def _parse_products(self, hits: list, search_term: str) -> list:
         parsed_results = []
+        
+        # Palabras clave del término de búsqueda normalizadas
+        search_words = set(_normalize_text(search_term).split())
 
         for index, item in enumerate(hits, start=1):
             try:
-                # 1. Título real mapeado desde mediaDescription
+                # 1. Título real del producto
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title_val = str(title_val).strip() if title_val else "Sin título"
 
-                # 2. Marca (extraída del campo o de la primera palabra del título)
-                extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
-                if isinstance(extracted_brand, dict):
-                    extracted_brand = extracted_brand.get("name")
+                # 2. Extracción de marca original
+                raw_brand = item.get("brand") or item.get("brandName") or item.get("marca")
+                if isinstance(raw_brand, dict):
+                    raw_brand = raw_brand.get("name")
 
-                if not extracted_brand or str(extracted_brand).strip() in ["", "None", "null", "Sin Marca"]:
-                    if title_val != "Sin título":
-                        extracted_brand = title_val.split()[0].capitalize()
-                    else:
-                        extracted_brand = "Sin Marca"
+                brand_str = str(raw_brand).strip() if raw_brand else ""
+                is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str)
 
-                # 3. Mapeo de precios reales de Algolia
+                # CORRECCIÓN BUG 2: Validar relevancia antes de procesar marca final o agregar
+                norm_title = _normalize_text(title_val)
+                norm_brand = _normalize_text(brand_str)
+                combined_target_text = f"{norm_title} {norm_brand}"
+
+                # Si ninguna palabra del término está presente en el título ni en la marca original, ignorar producto irrelevante
+                if not any(word in combined_target_text for word in search_words):
+                    continue
+
+                # CORRECCIÓN BUG 1: Si no hay marca real válida o es un código de proveedor, asignar "Sin Marca" de forma transparente
+                if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
+                    final_brand = "Sin Marca"
+                else:
+                    final_brand = brand_str
+
+                # 3. Precios
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -77,7 +104,7 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # 4. Control de stock desde outofstore
+                # 4. Stock
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
@@ -85,7 +112,7 @@ class FarmatodoScraper:
                     search_keyword=search_term,
                     search_position=index,
                     title=title_val,
-                    brand=str(extracted_brand).strip(),
+                    brand=final_brand,
                     base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock
