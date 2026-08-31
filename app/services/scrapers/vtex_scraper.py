@@ -56,6 +56,10 @@ class VTEXScraper:
         parsed_results = []
         for index, item in enumerate(raw_items, start=1):
             try:
+                # --- PASO 1: IMPRESIÓN CRUDA DE EVIDENCIA ---
+                if index == 1:
+                    print(f"[DEBUG ITEM COMPLETO] {item}", flush=True)
+
                 items_list = item.get("items", [])
                 if not items_list:
                     continue
@@ -73,14 +77,9 @@ class VTEXScraper:
                     list_price = float(comm_offer.get("ListPrice", price))
                     available = comm_offer.get("IsAvailable", True)
 
-                # --- EXTRACCIÓN ROBUSTA DE MARCA ---
-                extracted_brand = (
-                    item.get("brand") 
-                    or item.get("brandName") 
-                    or item.get("brand_name")
-                )
-                
+                extracted_brand = item.get("brand") or item.get("brandName")
                 title_val = item.get("productName", "").strip()
+
                 if not extracted_brand or str(extracted_brand).strip() in ["", "None", "null"]:
                     if title_val:
                         first_word = title_val.split()[0]
