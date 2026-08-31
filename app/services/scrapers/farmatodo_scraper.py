@@ -1,5 +1,4 @@
 import os
-import re
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
@@ -21,6 +20,7 @@ class FarmatodoScraper:
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
+        # Búsqueda directa idéntica a la que realiza el buscador web de Farmatodo
         params_str = f"query={search_term.strip()}&hitsPerPage={limit}&page=0"
 
         payload = {
@@ -52,27 +52,23 @@ class FarmatodoScraper:
         parsed_results = []
 
         for index, item in enumerate(hits, start=1):
-            # LÍNEA DE DEBUG CRUDA: Capturar la estructura real de Algolia para el primer hit
-            if index == 1:
-                print(f"[DEBUG FARMATODO RAW] {item}", flush=True)
-
             try:
+                # 1. Título real del producto
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title_val = str(title_val).strip() if title_val else "Sin título"
 
+                # 2. Extraer ÚNICAMENTE la marca si viene explícita en el JSON real de Algolia
                 extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
                 if isinstance(extracted_brand, dict):
                     extracted_brand = extracted_brand.get("name")
 
                 brand_str = str(extracted_brand).strip() if extracted_brand else ""
-                is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str)
 
-                if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
-                    if title_val != "Sin título":
-                        extracted_brand = title_val.split()[0].capitalize()
-                    else:
-                        extracted_brand = "Sin Marca"
+                # Si no existe marca real o viene como código numérico de proveedor, asigna "Sin Marca" sin adivinar por el título
+                if not brand_str or brand_str in ["None", "null", "Sin Marca"] or "-" in brand_str:
+                    brand_str = "Sin Marca"
 
+                # 3. Precios
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -82,6 +78,7 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
+                # 4. Disponibilidad
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
@@ -89,7 +86,7 @@ class FarmatodoScraper:
                     search_keyword=search_term,
                     search_position=index,
                     title=title_val,
-                    brand=str(extracted_brand).strip(),
+                    brand=brand_str,
                     base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock
