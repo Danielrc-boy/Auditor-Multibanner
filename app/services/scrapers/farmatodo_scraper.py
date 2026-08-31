@@ -11,10 +11,10 @@ FARMATODO_INDEX_NAME = os.getenv("FARMATODO_INDEX_NAME", "products-colombia")
 
 
 def _normalize_text(text: str) -> str:
-    """Remueve tildes y convierte a minúsculas para comparaciones precisas."""
+    """Remueve tildes, signos y convierte a minúsculas para comparaciones limpias."""
     if not text:
         return ""
-    text = unicodedata.normalize('NFD', text)
+    text = unicodedata.normalize('NFD', str(text))
     text = re.sub(r'[\u0300-\u036f]', '', text)
     return text.lower().strip()
 
@@ -51,9 +51,11 @@ class FarmatodoScraper:
                 
                 results_list = data.get("results", [])
                 if not results_list:
+                    print(f"[FARMATODO] Respuesta vacía de Algolia para '{search_term}'", flush=True)
                     return []
                 
                 hits = results_list[0].get("hits", [])
+                print(f"[FARMATODO] Algolia retornó {len(hits)} hits iniciales para '{search_term}'", flush=True)
                 return self._parse_products(hits, search_term)
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{search_term}': {e}", flush=True)
@@ -62,8 +64,8 @@ class FarmatodoScraper:
     def _parse_products(self, hits: list, search_term: str) -> list:
         parsed_results = []
         
-        # Palabras clave del término de búsqueda normalizadas
-        search_words = set(_normalize_text(search_term).split())
+        # Palabras individuales del término buscado
+        search_words = [w for w in _normalize_text(search_term).split() if len(w) > 2]
 
         for index, item in enumerate(hits, start=1):
             try:
@@ -79,16 +81,13 @@ class FarmatodoScraper:
                 brand_str = str(raw_brand).strip() if raw_brand else ""
                 is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str)
 
-                # CORRECCIÓN BUG 2: Validar relevancia antes de procesar marca final o agregar
-                norm_title = _normalize_text(title_val)
-                norm_brand = _normalize_text(brand_str)
-                combined_target_text = f"{norm_title} {norm_brand}"
+                # Validar relevancia: al menos una palabra de la búsqueda debe estar contenida en el título o la marca
+                combined_target_text = _normalize_text(f"{title_val} {brand_str}")
 
-                # Si ninguna palabra del término está presente en el título ni en la marca original, ignorar producto irrelevante
-                if not any(word in combined_target_text for word in search_words):
+                if search_words and not any(word in combined_target_text for word in search_words):
                     continue
 
-                # CORRECCIÓN BUG 1: Si no hay marca real válida o es un código de proveedor, asignar "Sin Marca" de forma transparente
+                # Marca honesta: si no viene en el JSON o es un código, poner "Sin Marca"
                 if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
                     final_brand = "Sin Marca"
                 else:
@@ -122,4 +121,5 @@ class FarmatodoScraper:
                 print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
                 continue
 
+        print(f"[FARMATODO] Total guardados tras filtrado: {len(parsed_results)} para '{search_term}'", flush=True)
         return parsed_results
