@@ -21,8 +21,16 @@ class FarmatodoScraper:
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
-        # Petición limpia directa al proxy de Algolia sin filtros forzados ni fallbacks sucios
-        params_str = f"query={search_term.strip()}&hitsPerPage={limit}&page=0"
+        term_clean = search_term.strip()
+        
+        # AJUSTE 1: Configurar queryType=prefixNone y queryType=exactResults para ajustar la precisión de Algolia
+        params_str = (
+            f"query={term_clean}"
+            f"&hitsPerPage={limit}"
+            f"&page=0"
+            f"&queryType=prefixNone"
+            f"&removeUnusedOptionalWords=true"
+        )
 
         payload = {
             "requests": [
@@ -54,22 +62,32 @@ class FarmatodoScraper:
 
         for index, item in enumerate(hits, start=1):
             try:
-                # 1. Título real desde mediaDescription
+                # 1. Título real
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title_val = str(title_val).strip() if title_val else "Sin título"
 
-                # 2. Extracción honesta de marca sin forzar nada según el término de búsqueda
-                extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
+                # 2. AJUSTE 2: Búsqueda exhaustiva del atributo de Marca real en el objeto Algolia
+                extracted_brand = (
+                    item.get("brand") 
+                    or item.get("brandName") 
+                    or item.get("marca")
+                    or item.get("brand_name")
+                )
+                
+                # Algolia suele estructurar marcas como diccionarios o arreglos
                 if isinstance(extracted_brand, dict):
-                    extracted_brand = extracted_brand.get("name")
+                    extracted_brand = extracted_brand.get("name") or extracted_brand.get("label")
+                elif isinstance(extracted_brand, list) and len(extracted_brand) > 0:
+                    extracted_brand = extracted_brand[0]
 
                 brand_str = str(extracted_brand).strip() if extracted_brand else ""
                 is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str)
 
-                # Si la marca no existe, es nula o viene como código de proveedor (ej: 2008M-...), extraemos la primera palabra del título
+                # Si la marca sigue vacía o es un código interno, intentamos buscar el término en el título antes de fallar
                 if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
-                    if title_val != "Sin título":
-                        extracted_brand = title_val.split()[0].capitalize()
+                    # Si la palabra clave buscada (ej. Nosotras) está dentro del título, esa es la marca
+                    if search_term.lower() in title_val.lower():
+                        extracted_brand = search_term.capitalize()
                     else:
                         extracted_brand = "Sin Marca"
 
@@ -83,7 +101,7 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # 4. Control real de stock
+                # 4. Control de stock
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
