@@ -21,11 +21,21 @@ class FarmatodoScraper:
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
+        # Añadimos parámetros estricto de Algolia: typoTolerance=false y queryType=prefixAll
+        params_str = (
+            f"query={search_term}"
+            f"&hitsPerPage={limit}"
+            f"&page=0"
+            f"&typoTolerance=false"
+            f"&queryType=prefixAll"
+            f"&removeWordsIfNoResults=none"
+        )
+
         payload = {
             "requests": [
                 {
                     "indexName": FARMATODO_INDEX_NAME,
-                    "params": f"query={search_term}&hitsPerPage={limit}&page=0"
+                    "params": params_str
                 }
             ]
         }
@@ -54,20 +64,18 @@ class FarmatodoScraper:
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title_val = str(title_val).strip() if title_val else "Sin título"
 
-                # 1. Intentar obtener el campo de marca
+                # 1. Intentar obtener la marca
                 extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
                 if isinstance(extracted_brand, dict):
                     extracted_brand = extracted_brand.get("name")
 
                 brand_str = str(extracted_brand).strip() if extracted_brand else ""
 
-                # 2. Si la marca viene vacía, nula o es un código tipo SKU (ej: 2008M-0008623), extraer del título
+                # 2. Descartar códigos numéricos y extraer del título si es necesario
                 is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str)
                 if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
                     if title_val != "Sin título":
-                        # Extraer la primera palabra o las palabras clave del producto como marca
                         words = title_val.split()
-                        # Si el título empieza por tipo de producto (Agua, Bebida), tomar la siguiente palabra significativa
                         if len(words) > 1 and words[0].lower() in ["agua", "bebida", "toallas", "protector", "crema", "shampoo"]:
                             extracted_brand = words[1].capitalize()
                         else:
@@ -75,7 +83,7 @@ class FarmatodoScraper:
                     else:
                         extracted_brand = "Sin Marca"
 
-                # 3. Mapeo de precios
+                # 3. Precios
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -85,7 +93,7 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # 4. Control de stock
+                # 4. Stock
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
