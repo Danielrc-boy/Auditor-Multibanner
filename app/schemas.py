@@ -45,4 +45,4 @@ class MonitoringConfigResponse(MonitoringConfigCreate):
     id: UUID
     is_active: bool
     start_date: datetime
-    # # # # # model_config = ConfigDict(from_attributes=True)sss
+    model_config = ConfigDict(from_attributes=True)

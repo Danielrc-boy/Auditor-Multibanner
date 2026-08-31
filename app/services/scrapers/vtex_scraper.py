@@ -11,10 +11,11 @@ SCRAPERAPI_KEY = os.getenv("SCRAPER_API_KEY") or os.getenv("SCRAPERAPI_KEY")
 
 class ExtractedProductData:
     """Objeto que encapsula los campos requeridos por main.py"""
-    def __init__(self, search_keyword: str, search_position: int, title: str, base_price: float, discount_price: float, in_stock: bool):
+    def __init__(self, search_keyword: str, search_position: int, title: str, brand: str, base_price: float, discount_price: float, in_stock: bool):
         self.search_keyword = search_keyword
         self.search_position = search_position
         self.title = title
+        self.brand = brand
         self.base_price = base_price
         self.discount_price = discount_price
         self.in_stock = in_stock
