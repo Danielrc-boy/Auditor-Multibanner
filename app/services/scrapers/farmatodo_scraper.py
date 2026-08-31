@@ -21,15 +21,8 @@ class FarmatodoScraper:
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
-        # Construcción de parámetros para Algolia
-        query_clean = search_term.strip()
-        
-        # Si es "Nosotras", forzamos el filtro de marca de Algolia
-        facet_filter = ""
-        if query_clean.lower() == "nosotras":
-            facet_filter = '&facetFilters=["brand:NOSOTRAS"]'
-
-        params_str = f"query={query_clean}&hitsPerPage={limit}&page=0{facet_filter}"
+        # Petición limpia directa al proxy de Algolia sin filtros forzados ni fallbacks sucios
+        params_str = f"query={search_term.strip()}&hitsPerPage={limit}&page=0"
 
         payload = {
             "requests": [
@@ -47,16 +40,10 @@ class FarmatodoScraper:
                 data = response.json()
                 
                 results_list = data.get("results", [])
-                hits = results_list[0].get("hits", []) if results_list else []
-
-                # Fallback: Si no trajo resultados con el facetFilter explícito, probamos sin él pero buscando "Toallas Nosotras"
-                if not hits and query_clean.lower() == "nosotras":
-                    fallback_params = f"query=Toallas Nosotras&hitsPerPage={limit}&page=0"
-                    payload_fallback = {"requests": [{"indexName": FARMATODO_INDEX_NAME, "params": fallback_params}]}
-                    resp_fallback = await client.post(self.url, json=payload_fallback, headers=self.headers)
-                    if resp_fallback.status_code == 200:
-                        hits = resp_fallback.json().get("results", [{}])[0].get("hits", [])
-
+                if not results_list:
+                    return []
+                
+                hits = results_list[0].get("hits", [])
                 return self._parse_products(hits, search_term)
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{search_term}': {e}", flush=True)
@@ -67,10 +54,11 @@ class FarmatodoScraper:
 
         for index, item in enumerate(hits, start=1):
             try:
+                # 1. Título real desde mediaDescription
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title_val = str(title_val).strip() if title_val else "Sin título"
 
-                # Extract Marca
+                # 2. Extracción honesta de marca sin forzar nada según el término de búsqueda
                 extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
                 if isinstance(extracted_brand, dict):
                     extracted_brand = extracted_brand.get("name")
@@ -78,16 +66,14 @@ class FarmatodoScraper:
                 brand_str = str(extracted_brand).strip() if extracted_brand else ""
                 is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str)
 
+                # Si la marca no existe, es nula o viene como código de proveedor (ej: 2008M-...), extraemos la primera palabra del título
                 if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
-                    if "nosotras" in search_term.lower():
-                        extracted_brand = "Nosotras"
-                    elif title_val != "Sin título":
-                        words = title_val.split()
-                        extracted_brand = words[0].capitalize()
+                    if title_val != "Sin título":
+                        extracted_brand = title_val.split()[0].capitalize()
                     else:
                         extracted_brand = "Sin Marca"
 
-                # Precios
+                # 3. Precios reales
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -97,7 +83,7 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # Stock
+                # 4. Control real de stock
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
