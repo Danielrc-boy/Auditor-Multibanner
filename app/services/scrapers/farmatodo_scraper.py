@@ -1,5 +1,4 @@
 import os
-import re
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
@@ -26,7 +25,7 @@ class FarmatodoScraper:
             "requests": [
                 {
                     "indexName": FARMATODO_INDEX_NAME,
-                    "params": f"query={search_term.strip()}&hitsPerPage={limit}&page=0"
+                    "params": f"query={search_term}&hitsPerPage={limit}&page=0"
                 }
             ]
         }
@@ -50,44 +49,25 @@ class FarmatodoScraper:
 
     def _parse_products(self, hits: list, search_term: str) -> list:
         parsed_results = []
-        valid_position = 1
 
-        for item in hits:
+        for index, item in enumerate(hits, start=1):
             try:
-                # 1. Título real mapeado rigurosamente desde mediaDescription (o fallbacks directos)
+                # 1. Título real mapeado desde mediaDescription
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
-                title_val = str(title_val).strip()
-                if not title_val:
-                    continue
+                title_val = str(title_val).strip() if title_val else "Sin título"
 
-                # 2. Extracción y saneamiento de Marca
-                extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca") or item.get("brand_name")
+                # 2. Marca (extraída del campo o de la primera palabra del título)
+                extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
                 if isinstance(extracted_brand, dict):
-                    extracted_brand = extracted_brand.get("name") or extracted_brand.get("label")
-                elif isinstance(extracted_brand, list) and len(extracted_brand) > 0:
-                    extracted_brand = extracted_brand[0]
+                    extracted_brand = extracted_brand.get("name")
 
-                brand_str = str(extracted_brand).strip() if extracted_brand else ""
-
-                # Identificar si la marca es un código de proveedor (ej: 2008M-..., números con guion, o vacíos)
-                is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str) or brand_str.startswith("2008")
-                is_invalid_brand = not brand_str or brand_str.lower() in ["none", "null", "sin marca"] or is_code_brand
-
-                if is_invalid_brand:
-                    # Asignar el término de búsqueda si está presente en el título; evita asignar categorías como "Agua" o "Bebida"
-                    if search_term.lower() in title_val.lower():
-                        final_brand = search_term.capitalize()
+                if not extracted_brand or str(extracted_brand).strip() in ["", "None", "null", "Sin Marca"]:
+                    if title_val != "Sin título":
+                        extracted_brand = title_val.split()[0].capitalize()
                     else:
-                        final_brand = "Sin Marca"
-                else:
-                    final_brand = brand_str
+                        extracted_brand = "Sin Marca"
 
-                # 3. Filtro de segmentación: Descartar basura enviada por la coincidencia difusa de Algolia
-                if search_term.lower() in ["nosotras", "winny", "huggies", "colgate"]:
-                    if (search_term.lower() not in title_val.lower()) and (search_term.lower() not in final_brand.lower()):
-                        continue
-
-                # 4. Precios reales según especificación: fullPrice / offerPrice
+                # 3. Mapeo de precios reales de Algolia
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -97,21 +77,20 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # 5. Control de stock riguroso: NOT outofstore
+                # 4. Control de stock desde outofstore
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
                 product = ExtractedProductData(
                     search_keyword=search_term,
-                    search_position=valid_position,
+                    search_position=index,
                     title=title_val,
-                    brand=final_brand,
+                    brand=str(extracted_brand).strip(),
                     base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock
                 )
                 parsed_results.append(product)
-                valid_position += 1
             except Exception as e:
                 print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
                 continue
