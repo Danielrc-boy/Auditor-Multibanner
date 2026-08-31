@@ -62,7 +62,6 @@ class FarmatodoScraper:
         parsed_results = []
         valid_position = 1
         
-        # Palabras clave normalizadas (sin tildes)
         stopwords = {"para", "como", "con", "sin", "und", "units", "pack"}
         search_words = [
             normalize_text(w) for w in search_term.strip().split() 
@@ -78,13 +77,11 @@ class FarmatodoScraper:
 
                 title_norm = normalize_text(title)
 
-                # Comparación flexible insensible a tildes
                 if search_words:
                     matches = sum(1 for word in search_words if word in title_norm)
                     if matches == 0:
                         continue
 
-                # Extracción de Marca
                 raw_brand = item.get("brand") or item.get("brandName") or item.get("marca") or item.get("brand_name")
                 if isinstance(raw_brand, dict):
                     raw_brand = raw_brand.get("name") or raw_brand.get("label")
@@ -99,7 +96,6 @@ class FarmatodoScraper:
                 else:
                     final_brand = brand_str
 
-                # Precios
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -109,7 +105,6 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # Stock
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
