@@ -23,13 +23,13 @@ class FarmatodoScraper:
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
         term_clean = search_term.strip()
         
-        # AJUSTE 1: Configurar queryType=prefixNone y queryType=exactResults para ajustar la precisión de Algolia
+        # Parámetros estrictos enviando la consulta y deshabilitando la separación difusa
         params_str = (
             f"query={term_clean}"
             f"&hitsPerPage={limit}"
             f"&page=0"
-            f"&queryType=prefixNone"
-            f"&removeUnusedOptionalWords=true"
+            f"&advancedSyntax=true"
+            f"&removeStopWords=false"
         )
 
         payload = {
@@ -59,39 +59,52 @@ class FarmatodoScraper:
 
     def _parse_products(self, hits: list, search_term: str) -> list:
         parsed_results = []
+        valid_position = 1
 
-        for index, item in enumerate(hits, start=1):
+        for item in hits:
             try:
                 # 1. Título real
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
-                title_val = str(title_val).strip() if title_val else "Sin título"
+                title_val = str(title_val).strip() if title_val else ""
 
-                # 2. AJUSTE 2: Búsqueda exhaustiva del atributo de Marca real en el objeto Algolia
-                extracted_brand = (
+                if not title_val:
+                    continue
+
+                # 2. Extracción limpia de la MARCA real desde los campos de Algolia
+                raw_brand = (
                     item.get("brand") 
                     or item.get("brandName") 
-                    or item.get("marca")
+                    or item.get("marca") 
                     or item.get("brand_name")
                 )
+
+                if isinstance(raw_brand, dict):
+                    raw_brand = raw_brand.get("name") or raw_brand.get("label")
+                elif isinstance(raw_brand, list) and len(raw_brand) > 0:
+                    raw_brand = raw_brand[0]
+
+                brand_str = str(raw_brand).strip() if raw_brand else ""
                 
-                # Algolia suele estructurar marcas como diccionarios o arreglos
-                if isinstance(extracted_brand, dict):
-                    extracted_brand = extracted_brand.get("name") or extracted_brand.get("label")
-                elif isinstance(extracted_brand, list) and len(extracted_brand) > 0:
-                    extracted_brand = extracted_brand[0]
+                # Validar si viene un código sucio o 'None'
+                is_invalid_brand = not brand_str or brand_str in ["None", "null", "Sin Marca"] or bool(re.search(r'\d', brand_str) and '-' in brand_str)
 
-                brand_str = str(extracted_brand).strip() if extracted_brand else ""
-                is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str)
-
-                # Si la marca sigue vacía o es un código interno, intentamos buscar el término en el título antes de fallar
-                if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
-                    # Si la palabra clave buscada (ej. Nosotras) está dentro del título, esa es la marca
+                if is_invalid_brand:
+                    # Si el término buscado está en el título, esa es la marca. Si no, asignamos "Sin Marca"
                     if search_term.lower() in title_val.lower():
-                        extracted_brand = search_term.capitalize()
+                        final_brand = search_term.capitalize()
                     else:
-                        extracted_brand = "Sin Marca"
+                        final_brand = "Sin Marca"
+                else:
+                    final_brand = brand_str
 
-                # 3. Precios reales
+                # 3. FILTRO DE RELEVANCIA
+                # Si estamos buscando una marca específica como "Nosotras", ignorar productos que sean bebidas, bolsas o chicles
+                if search_term.lower() in ["nosotras", "winny", "huggies", "colgate"]:
+                    # Si el producto no contiene el término ni en el título ni en la marca real de Algolia, es Basura de Algolia
+                    if (search_term.lower() not in title_val.lower()) and (search_term.lower() not in final_brand.lower()):
+                        continue
+
+                # 4. Precios
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -101,20 +114,22 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # 4. Control de stock
+                # 5. Stock
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
                 product = ExtractedProductData(
                     search_keyword=search_term,
-                    search_position=index,
+                    search_position=valid_position,
                     title=title_val,
-                    brand=str(extracted_brand).strip(),
+                    brand=final_brand,
                     base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock
                 )
                 parsed_results.append(product)
+                valid_position += 1
+
             except Exception as e:
                 print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
                 continue
