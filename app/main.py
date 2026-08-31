@@ -54,13 +54,21 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
             try:
                 term = getattr(item, "search_keyword", None)
                 pos = getattr(item, "search_position", None)
-                title = getattr(item, "title", None)
+                title = getattr(item, "title", "") or ""
                 brand = getattr(item, "brand", None)
+
+                # Respaldo por nombre de producto si la marca viene nula o por defecto
+                if not brand or str(brand).strip() in ["", "None", "null", "Sin Marca"]:
+                    if title.strip():
+                        brand = title.strip().split()[0].capitalize()
+                    else:
+                        brand = "Sin Marca"
+
                 base_price = getattr(item, "base_price", 0.0)
                 disc_price = getattr(item, "discount_price", None)
                 stock = getattr(item, "in_stock", True)
                 cur.execute(insert_query, (
-                    formatted_retailer, term, title, brand, pos,
+                    formatted_retailer, term, title, str(brand).strip(), pos,
                     base_price, disc_price, stock
                 ))
                 saved_count += 1

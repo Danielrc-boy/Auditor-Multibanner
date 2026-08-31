@@ -32,7 +32,6 @@ class VTEXScraper:
             f"?_from=0&_to={limit - 1}"
         )
 
-        # Si es Éxito y tenemos API Key, pasamos la petición a través de ScraperAPI
         if self.retailer == "exito" and SCRAPERAPI_KEY:
             request_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}"
             headers = {"Accept": "application/json"}
@@ -74,21 +73,26 @@ class VTEXScraper:
                     list_price = float(comm_offer.get("ListPrice", price))
                     available = comm_offer.get("IsAvailable", True)
 
-                # --- EXTRACCIÓN DE MARCA ---
-                # 1. Obtiene la marca nativa de VTEX (brand o brandName)
-                extracted_brand = item.get("brand") or item.get("brandName")
+                # --- EXTRACCIÓN ROBUSTA DE MARCA ---
+                extracted_brand = (
+                    item.get("brand") 
+                    or item.get("brandName") 
+                    or item.get("brand_name")
+                )
                 
-                # 2. Respaldo: Si viene None, toma la primera palabra del nombre del producto
-                if not extracted_brand and item.get("productName"):
-                    words = item.get("productName", "").strip().split()
-                    if words:
-                        extracted_brand = words[0].capitalize()
+                title_val = item.get("productName", "").strip()
+                if not extracted_brand or str(extracted_brand).strip() in ["", "None", "null"]:
+                    if title_val:
+                        first_word = title_val.split()[0]
+                        extracted_brand = first_word.capitalize()
+                    else:
+                        extracted_brand = "Sin Marca"
 
                 product = ExtractedProductData(
                     search_keyword=search_term,
                     search_position=index,
-                    title=item.get("productName", "Sin título"),
-                    brand=extracted_brand or "Sin Marca",
+                    title=title_val if title_val else "Sin título",
+                    brand=str(extracted_brand).strip(),
                     base_price=list_price if list_price > 0 else price,
                     discount_price=price if (price > 0 and price < list_price) else None,
                     in_stock=available
