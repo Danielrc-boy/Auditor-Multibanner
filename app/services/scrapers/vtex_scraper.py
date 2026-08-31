@@ -35,22 +35,30 @@ class VTEXScraper:
         self.base_url = RETAILER_URLS.get(self.retailer, "https://www.exito.com")
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
-        encoded_term = urllib.parse.quote(search_term)
+        # Sanitización y encoding estricto del término de búsqueda
+        encoded_term = urllib.parse.quote(search_term.strip())
         target_url = f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_term}?_from=0&_to={limit - 1}"
 
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Accept-Language": "es-CO,es-ES;q=0.9,es;q=0.8"
+        }
+
+        # Si existe ScraperAPI, se envía con keep_headers=true y country_code=co
         if SCRAPERAPI_KEY:
-            request_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}"
-            headers = {"Accept": "application/json"}
+            request_url = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={urllib.parse.quote(target_url)}&keep_headers=true&country_code=co"
         else:
             request_url = target_url
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json"
-            }
 
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
             try:
                 response = await client.get(request_url, headers=headers)
+                
+                # Fallback: Si responde status diferente a 200, intentar consulta directa sin proxy
+                if response.status_code != 200 and SCRAPERAPI_KEY:
+                    response = await client.get(target_url, headers=headers)
+
                 response.raise_for_status()
                 data = response.json()
                 return self._parse_products(data, search_term)
