@@ -3,7 +3,6 @@ import re
 import urllib.parse
 import unicodedata
 import httpx
-import json
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
@@ -58,14 +57,6 @@ class FarmatodoScraper:
                     return []
                 
                 hits = results[0].get("hits", [])
-
-                # PRINT DE DEPURACIÓN: Inspeccionar estructura exacta del primer item
-                if hits:
-                    print("\n" + "="*50, flush=True)
-                    print(f"[DEBUG FARMATODO] Estructura JSON para '{clean_term}':", flush=True)
-                    print(json.dumps(hits[0], indent=2, ensure_ascii=False), flush=True)
-                    print("="*50 + "\n", flush=True)
-
                 return self._parse_products(hits, clean_term)
 
             except Exception as e:
@@ -139,7 +130,8 @@ class FarmatodoScraper:
                 offer_price = round(base_price * (1.0 - pct_val), 2)
 
         discount_price = None
-        if offer_price and 0 < offer_val < base_price:
+        # Corrección de la variable en la validación condicional:
+        if offer_price and 0 < offer_price < base_price:
             discount_price = offer_price
         elif offer_price and offer_price > base_price:
             discount_price = base_price
