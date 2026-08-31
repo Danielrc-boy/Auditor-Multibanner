@@ -24,19 +24,19 @@ class FarmatodoScraper:
             "x-algolia-application-id": FARMATODO_APP_ID.strip(),
             "x-algolia-api-key": FARMATODO_API_KEY.strip(),
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Origin": "https://www.farmatodo.com.co",
-            "Referer": "https://www.farmatodo.com.co/"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
         clean_term = search_term.strip()
-        params_str = f"query={urllib.parse.quote(clean_term)}&hitsPerPage={limit}&page=0"
+        
+        # Enviar parametros limpios a la API REST de Algolia
         payload = {
             "requests": [
                 {
                     "indexName": FARMATODO_INDEX_NAME,
-                    "params": params_str
+                    "query": clean_term,
+                    "hitsPerPage": limit
                 }
             ]
         }
@@ -61,12 +61,6 @@ class FarmatodoScraper:
     def _parse_products(self, raw_hits: list, search_term: str) -> list:
         parsed_results = []
         valid_position = 1
-        
-        stopwords = {"para", "como", "con", "sin", "und", "units", "pack"}
-        search_words = [
-            normalize_text(w) for w in search_term.strip().split() 
-            if len(w) > 2 and normalize_text(w) not in stopwords
-        ]
 
         for item in raw_hits:
             try:
@@ -74,13 +68,6 @@ class FarmatodoScraper:
                 title = str(title).strip()
                 if not title:
                     continue
-
-                title_norm = normalize_text(title)
-
-                if search_words:
-                    matches = sum(1 for word in search_words if word in title_norm)
-                    if matches == 0:
-                        continue
 
                 raw_brand = item.get("brand") or item.get("brandName") or item.get("marca") or item.get("brand_name")
                 if isinstance(raw_brand, dict):
