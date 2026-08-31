@@ -11,7 +11,16 @@ SCRAPERAPI_KEY = os.getenv("SCRAPER_API_KEY") or os.getenv("SCRAPERAPI_KEY")
 
 class ExtractedProductData:
     """Objeto que encapsula los campos requeridos por main.py"""
-    def __init__(self, search_keyword: str, search_position: int, title: str, brand: str, base_price: float, discount_price: float, in_stock: bool):
+    def __init__(
+        self, 
+        search_keyword: str, 
+        search_position: int, 
+        title: str, 
+        brand: str = "Sin Marca", 
+        base_price: float = 0.0, 
+        discount_price: float = None, 
+        in_stock: bool = True
+    ):
         self.search_keyword = search_keyword
         self.search_position = search_position
         self.title = title
@@ -54,9 +63,11 @@ class VTEXScraper:
 
     def _parse_products(self, raw_items: list, search_term: str) -> list:
         parsed_results = []
+        if not isinstance(raw_items, list):
+            return parsed_results
+
         for index, item in enumerate(raw_items, start=1):
             try:
-                # --- PASO 1: IMPRESIÓN CRUDA DE EVIDENCIA ---
                 if index == 1:
                     print(f"[DEBUG ITEM COMPLETO] {item}", flush=True)
 
@@ -102,3 +113,33 @@ class VTEXScraper:
                 continue
 
         return parsed_results
+
+async def run_vtex_scraping(conn) -> int:
+    search_configs = []
+    with conn.cursor() as cur:
+        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
+        rows = cur.fetchall()
+        search_configs = [r["search_term"] for r in rows] if rows else []
+
+    if not search_configs:
+        search_configs = ["leche"]
+
+    total_saved = 0
+    from main import save_scraper_results
+
+    for retailer in ["exito", "carulla"]:
+        print(f"\n[SCRAPING] Iniciando extracción VTEX para: {retailer.upper()}", flush=True)
+        scraper = VTEXScraper(retailer=retailer)
+        for term in search_configs:
+            try:
+                results = await scraper.search_keyword(term, limit=50)
+                if results:
+                    count = save_scraper_results(conn, results, retailer=retailer)
+                    total_saved += count
+                    print(f"[{retailer.upper()}] Guardados {count} para '{term}'.", flush=True)
+                else:
+                    print(f"[{retailer.upper()}] Sin resultados para '{term}'.", flush=True)
+            except Exception as e:
+                print(f"[SCRAPING ERROR] {retailer.upper()} '{term}': {e}", flush=True)
+
+    return total_saved
