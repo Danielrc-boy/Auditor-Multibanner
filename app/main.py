@@ -135,7 +135,6 @@ async def run_rappi_scraping(conn):
 
 
 async def run_all_scraping(conn):
-    # Declaración segura de vtex_total si existe el módulo
     vtex_total = 0
     try:
         from app.services.scrapers.vtex_scraper import run_vtex_scraping
@@ -265,7 +264,14 @@ def get_results(
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
-    query = "SELECT * FROM scraper_results WHERE 1=1"
+    query = """
+        SELECT 
+            id, retailer, search_term, product_name, brand, position,
+            price, discount_price, is_available,
+            (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
+        FROM scraper_results 
+        WHERE 1=1
+    """
     params = []
     if retailer:
         query += " AND retailer ILIKE %s"
@@ -279,7 +285,7 @@ def get_results(
     if date_to:
         query += " AND captured_at <= %s"
         params.append(date_to)
-    query += " ORDER BY captured_at DESC LIMIT %s;"
+    query += " ORDER BY id DESC LIMIT %s;"
     params.append(limit)
     cursor.execute(query, tuple(params))
     results = cursor.fetchall()
