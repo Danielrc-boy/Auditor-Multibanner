@@ -21,15 +21,15 @@ class FarmatodoScraper:
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
-        # Añadimos parámetros estricto de Algolia: typoTolerance=false y queryType=prefixAll
-        params_str = (
-            f"query={search_term}"
-            f"&hitsPerPage={limit}"
-            f"&page=0"
-            f"&typoTolerance=false"
-            f"&queryType=prefixAll"
-            f"&removeWordsIfNoResults=none"
-        )
+        # Construcción de parámetros para Algolia
+        query_clean = search_term.strip()
+        
+        # Si es "Nosotras", forzamos el filtro de marca de Algolia
+        facet_filter = ""
+        if query_clean.lower() == "nosotras":
+            facet_filter = '&facetFilters=["brand:NOSOTRAS"]'
+
+        params_str = f"query={query_clean}&hitsPerPage={limit}&page=0{facet_filter}"
 
         payload = {
             "requests": [
@@ -47,10 +47,16 @@ class FarmatodoScraper:
                 data = response.json()
                 
                 results_list = data.get("results", [])
-                if not results_list:
-                    return []
-                
-                hits = results_list[0].get("hits", [])
+                hits = results_list[0].get("hits", []) if results_list else []
+
+                # Fallback: Si no trajo resultados con el facetFilter explícito, probamos sin él pero buscando "Toallas Nosotras"
+                if not hits and query_clean.lower() == "nosotras":
+                    fallback_params = f"query=Toallas Nosotras&hitsPerPage={limit}&page=0"
+                    payload_fallback = {"requests": [{"indexName": FARMATODO_INDEX_NAME, "params": fallback_params}]}
+                    resp_fallback = await client.post(self.url, json=payload_fallback, headers=self.headers)
+                    if resp_fallback.status_code == 200:
+                        hits = resp_fallback.json().get("results", [{}])[0].get("hits", [])
+
                 return self._parse_products(hits, search_term)
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{search_term}': {e}", flush=True)
@@ -64,26 +70,24 @@ class FarmatodoScraper:
                 title_val = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title_val = str(title_val).strip() if title_val else "Sin título"
 
-                # 1. Intentar obtener la marca
+                # Extract Marca
                 extracted_brand = item.get("brand") or item.get("brandName") or item.get("marca")
                 if isinstance(extracted_brand, dict):
                     extracted_brand = extracted_brand.get("name")
 
                 brand_str = str(extracted_brand).strip() if extracted_brand else ""
-
-                # 2. Descartar códigos numéricos y extraer del título si es necesario
                 is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str)
+
                 if not brand_str or brand_str in ["None", "null", "Sin Marca"] or is_code_brand:
-                    if title_val != "Sin título":
+                    if "nosotras" in search_term.lower():
+                        extracted_brand = "Nosotras"
+                    elif title_val != "Sin título":
                         words = title_val.split()
-                        if len(words) > 1 and words[0].lower() in ["agua", "bebida", "toallas", "protector", "crema", "shampoo"]:
-                            extracted_brand = words[1].capitalize()
-                        else:
-                            extracted_brand = words[0].capitalize()
+                        extracted_brand = words[0].capitalize()
                     else:
                         extracted_brand = "Sin Marca"
 
-                # 3. Precios
+                # Precios
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -93,7 +97,7 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # 4. Stock
+                # Stock
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
