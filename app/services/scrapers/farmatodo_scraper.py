@@ -4,7 +4,6 @@ import urllib.parse
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
 
-# Proxy oficial de Farmatodo (evita NameResolutionError)
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
 FARMATODO_API_KEY = os.getenv("ALGOLIA_API_KEY", "eb9544fe7bfe7ec4c1aa5e5bf7740feb")
@@ -54,16 +53,23 @@ class FarmatodoScraper:
     def _parse_products(self, raw_hits: list, search_term: str) -> list:
         parsed_results = []
         valid_position = 1
+        
+        # Palabras obligatorias del termino buscado
+        search_words = [w.lower() for w in search_term.strip().split() if len(w) > 2]
 
         for item in raw_hits:
             try:
-                # 1. Título real mapeado rigurosamente desde mediaDescription
                 title = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title = str(title).strip()
                 if not title:
                     continue
 
-                # 2. Extracción y saneamiento de Marca
+                # FILTRO ANTI-BASURA: Si Algolia trae un producto sin relacion con el termino, se descarta
+                title_lower = title.lower()
+                if search_words and not any(word in title_lower for word in search_words):
+                    continue
+
+                # EXTRACCION HONESTA DE MARCA
                 raw_brand = item.get("brand") or item.get("brandName") or item.get("marca") or item.get("brand_name")
                 if isinstance(raw_brand, dict):
                     raw_brand = raw_brand.get("name") or raw_brand.get("label")
@@ -71,20 +77,14 @@ class FarmatodoScraper:
                     raw_brand = raw_brand[0]
 
                 brand_str = str(raw_brand).strip() if raw_brand else ""
-
-                # Filtrar códigos de proveedor (ej: 2008M-..., números con guion, o vacíos)
                 is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str) or brand_str.startswith("2008")
-                is_invalid_brand = not brand_str or brand_str.lower() in ["none", "null", "sin marca"] or is_code_brand
 
-                if is_invalid_brand:
-                    if search_term.lower() in title.lower():
-                        final_brand = search_term.capitalize()
-                    else:
-                        final_brand = "Sin Marca"
+                if not brand_str or brand_str.lower() in ["none", "null", "sin marca"] or is_code_brand:
+                    final_brand = "Sin Marca"
                 else:
                     final_brand = brand_str
 
-                # 3. Precios reales de Algolia (fullPrice y offerPrice)
+                # Precios
                 base_price = float(item.get("fullPrice", 0.0) or item.get("price", 0.0))
                 offer_price = item.get("offerPrice")
                 
@@ -94,7 +94,7 @@ class FarmatodoScraper:
                     if 0 < offer_val < base_price:
                         discount_price = offer_val
 
-                # 4. Control de stock riguroso usando 'outofstore'
+                # Stock
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
