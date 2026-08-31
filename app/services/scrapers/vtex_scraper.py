@@ -59,24 +59,35 @@ class VTEXScraper:
                 items_list = item.get("items", [])
                 if not items_list:
                     continue
-                
+
                 first_item = items_list[0]
                 sellers = first_item.get("sellers", [])
-                
+
                 price = 0.0
                 list_price = 0.0
                 available = True
-                
+
                 if sellers:
                     comm_offer = sellers[0].get("commertialOffer", {})
                     price = float(comm_offer.get("Price", 0.0))
                     list_price = float(comm_offer.get("ListPrice", price))
                     available = comm_offer.get("IsAvailable", True)
 
+                # --- EXTRACCIÓN DE MARCA ---
+                # 1. Obtiene la marca nativa de VTEX (brand o brandName)
+                extracted_brand = item.get("brand") or item.get("brandName")
+                
+                # 2. Respaldo: Si viene None, toma la primera palabra del nombre del producto
+                if not extracted_brand and item.get("productName"):
+                    words = item.get("productName", "").strip().split()
+                    if words:
+                        extracted_brand = words[0].capitalize()
+
                 product = ExtractedProductData(
                     search_keyword=search_term,
                     search_position=index,
                     title=item.get("productName", "Sin título"),
+                    brand=extracted_brand or "Sin Marca",
                     base_price=list_price if list_price > 0 else price,
                     discount_price=price if (price > 0 and price < list_price) else None,
                     in_stock=available
@@ -85,5 +96,5 @@ class VTEXScraper:
             except Exception as e:
                 print(f"[PARSER ERROR] {self.retailer.upper()}: {e}", flush=True)
                 continue
-                
+
         return parsed_results

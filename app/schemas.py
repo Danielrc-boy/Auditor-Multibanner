@@ -3,6 +3,16 @@ from typing import Optional
 from datetime import datetime
 from uuid import UUID
 
+class ExtractedProductData(BaseModel):
+    search_keyword: str
+    search_position: int
+    title: str
+    brand: Optional[str] = "Sin Marca"
+    base_price: float
+    discount_price: Optional[float] = None
+    in_stock: bool = True
+
+
 class RetailerCreate(BaseModel):
     code: str
     name: str
