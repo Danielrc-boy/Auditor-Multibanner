@@ -10,6 +10,8 @@ FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
 FARMATODO_API_KEY = os.getenv("ALGOLIA_API_KEY", "eb9544fe7bfe7ec4c1aa5e5bf7740feb")
 FARMATODO_INDEX_NAME = os.getenv("ALGOLIA_INDEX_NAME", "products-colombia")
 
+FARMATODO_PRODUCT_API = "https://api.farmatodo.com.co/api/v1/product/detail/co"
+
 KNOWN_BRANDS = [
     "Nosotras", "Kotex", "Stayfree", "Pequeñín", "Winny", "Farmatodo",
     "Huggies", "Pampers", "Nivea", "Dove", "Protex", "Saba", "Tena",
@@ -57,7 +59,7 @@ class FarmatodoScraper:
                     return []
                 
                 hits = results[0].get("hits", [])
-                return self._parse_products(hits, clean_term)
+                return await self._parse_products(client, hits, clean_term)
 
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{clean_term}': {e}", flush=True)
@@ -86,60 +88,29 @@ class FarmatodoScraper:
 
         return "Sin Marca"
 
-    def _safe_float(self, val) -> float | None:
-        if val is None or val == "":
-            return None
+    async def _fetch_live_prices(self, client: httpx.AsyncClient, item_id: str) -> tuple[float, float | None]:
+        """Consulta la API de detalle para obtener el precio dinámico real con descuento."""
+        if not item_id:
+            return 0.0, None
+
         try:
-            if isinstance(val, str):
-                val = re.sub(r'[^\d.]', '', val.replace(',', '.'))
-            res = float(val)
-            return res if res > 0 else None
-        except (ValueError, TypeError):
-            return None
+            url = f"{FARMATODO_PRODUCT_API}/{item_id}"
+            resp = await client.get(url, headers={"User-Agent": self.headers["User-Agent"]}, timeout=5.0)
+            if resp.status_code == 200:
+                detail = resp.json()
+                price_data = detail.get("price", {}) or detail
+                
+                base = float(price_data.get("fullPrice") or price_data.get("price") or 0.0)
+                offer = price_data.get("offerPrice") or price_data.get("priceWithDiscount")
+                
+                discount = float(offer) if offer and float(offer) < base else None
+                return base, discount
+        except Exception:
+            pass
 
-    def _extract_prices(self, item: dict) -> tuple[float, float | None]:
-        raw_price_obj = item.get("price")
-        
-        base_price = 0.0
-        offer_price = None
+        return 0.0, None
 
-        if isinstance(raw_price_obj, dict):
-            base_price = self._safe_float(raw_price_obj.get("base") or raw_price_obj.get("full") or raw_price_obj.get("regular")) or 0.0
-            offer_price = self._safe_float(raw_price_obj.get("offer") or raw_price_obj.get("discount") or raw_price_obj.get("special"))
-        else:
-            base_price = self._safe_float(item.get("fullPrice") or item.get("price") or item.get("originalPrice") or item.get("regularPrice")) or 0.0
-            offer_price = self._safe_float(item.get("offerPrice") or item.get("priceWithDiscount") or item.get("discountPrice") or item.get("finalPrice") or item.get("specialPrice"))
-
-        if not offer_price:
-            promos = item.get("promotions") or item.get("discounts") or item.get("offers")
-            if isinstance(promos, list) and len(promos) > 0:
-                first_promo = promos[0]
-                if isinstance(first_promo, dict):
-                    offer_price = self._safe_float(first_promo.get("price") or first_promo.get("offerPrice") or first_promo.get("specialPrice"))
-                    
-                    if not offer_price and base_price > 0:
-                        pct = self._safe_float(first_promo.get("percent") or first_promo.get("percentage") or first_promo.get("value"))
-                        if pct:
-                            pct_val = pct / 100.0 if pct > 1 else pct
-                            offer_price = round(base_price * (1.0 - pct_val), 2)
-
-        if not offer_price and base_price > 0:
-            pct = self._safe_float(item.get("discountPercent") or item.get("discount_percent") or item.get("percentage") or item.get("discount"))
-            if pct:
-                pct_val = pct / 100.0 if pct > 1 else pct
-                offer_price = round(base_price * (1.0 - pct_val), 2)
-
-        discount_price = None
-        # Corrección de la variable en la validación condicional:
-        if offer_price and 0 < offer_price < base_price:
-            discount_price = offer_price
-        elif offer_price and offer_price > base_price:
-            discount_price = base_price
-            base_price = offer_price
-
-        return base_price, discount_price
-
-    def _parse_products(self, raw_hits: list, search_term: str) -> list:
+    async def _parse_products(self, client: httpx.AsyncClient, raw_hits: list, search_term: str) -> list:
         parsed_results = []
         valid_position = 1
 
@@ -151,7 +122,18 @@ class FarmatodoScraper:
                     continue
 
                 final_brand = self._extract_brand(item, title)
-                base_price, discount_price = self._extract_prices(item)
+
+                # 1. Obtener precio base inicial de Algolia
+                base_price = float(item.get("fullPrice") or item.get("price") or 0.0)
+                discount_price = None
+
+                # 2. Consultar precio real descontado desde la API directa de productos
+                item_id = item.get("objectID") or item.get("id")
+                if item_id:
+                    live_base, live_discount = await self._fetch_live_prices(client, str(item_id))
+                    if live_base > 0:
+                        base_price = live_base
+                        discount_price = live_discount
 
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
