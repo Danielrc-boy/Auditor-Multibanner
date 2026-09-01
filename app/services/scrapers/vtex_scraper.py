@@ -1,5 +1,4 @@
 import httpx
-import re
 from uuid import UUID
 from dataclasses import dataclass
 from typing import Optional, List
