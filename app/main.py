@@ -29,6 +29,7 @@ app.add_middleware(
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+
 def get_db_connection():
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
@@ -55,14 +56,7 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                 term = getattr(item, "search_keyword", None)
                 pos = getattr(item, "search_position", None)
                 title = getattr(item, "title", "") or ""
-                brand = getattr(item, "brand", None)
-
-                if not brand or str(brand).strip() in ["", "None", "null", "Sin Marca"]:
-                    if title.strip():
-                        brand = title.strip().split()[0].capitalize()
-                    else:
-                        brand = "Sin Marca"
-
+                brand = getattr(item, "brand", None) or "Sin Marca"
                 base_price = getattr(item, "base_price", 0.0)
                 disc_price = getattr(item, "discount_price", None)
                 stock = getattr(item, "in_stock", True)
@@ -73,7 +67,6 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                 saved_count += 1
             except Exception as e:
                 print(f"[DB ERROR] {formatted_retailer}: {e}", flush=True)
-
     conn.commit()
     return saved_count
 
@@ -84,14 +77,11 @@ async def run_farmatodo_scraping(conn):
         cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
         rows = cur.fetchall()
         search_configs = [r["search_term"] for r in rows] if rows else []
-
     if not search_configs:
-        print("[FARMATODO SCRAPING] No hay términos activos en search_configs.", flush=True)
+        print("[FARMATODO SCRAPING] No hay términos activos.", flush=True)
         return 0
-
     total_saved = 0
     from app.services.scrapers.farmatodo_scraper import FarmatodoScraper
-
     print("\n[SCRAPING] Iniciando extracción para: FARMATODO", flush=True)
     scraper = FarmatodoScraper()
     for term in search_configs:
@@ -105,7 +95,6 @@ async def run_farmatodo_scraping(conn):
                 print(f"[FARMATODO] Sin resultados para '{term}'.", flush=True)
         except Exception as e:
             print(f"[SCRAPING ERROR] FARMATODO '{term}': {e}", flush=True)
-
     return total_saved
 
 
@@ -115,17 +104,12 @@ async def run_rappi_scraping(conn):
         cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
         rows = cur.fetchall()
         search_configs = [r["search_term"] for r in rows] if rows else []
-
     if not search_configs:
-        print("[RAPPI SCRAPING] No hay términos activos en search_configs.", flush=True)
         return 0
-
     total_saved = 0
     from app.services.scrapers.rappi_scraper import RappiScraper
-
     print("\n[SCRAPING] Iniciando extracción para: RAPPI", flush=True)
     scraper = RappiScraper()
-
     for term in search_configs:
         try:
             results = await scraper.search_keyword(term, limit=50)
@@ -137,35 +121,24 @@ async def run_rappi_scraping(conn):
                 print(f"[RAPPI] Sin resultados para '{term}'.", flush=True)
         except Exception as e:
             print(f"[SCRAPING ERROR] RAPPI '{term}': {e}", flush=True)
-
     return total_saved
 
 
 async def run_all_scraping(conn):
     total_records = 0
-
-    # 1. VTEX Scraper (Éxito y Carulla)
     try:
         from app.services.scrapers.vtex_scraper import run_vtex_scraping
-        vtex_saved = await run_vtex_scraping(conn)
-        total_records += vtex_saved
+        total_records += await run_vtex_scraping(conn)
     except Exception as e:
         print(f"[MAIN ERROR] VTEX Scraper: {e}", flush=True)
-
-    # 2. Farmatodo Scraper
     try:
-        farmatodo_saved = await run_farmatodo_scraping(conn)
-        total_records += farmatodo_saved
+        total_records += await run_farmatodo_scraping(conn)
     except Exception as e:
         print(f"[MAIN ERROR] Farmatodo Scraper: {e}", flush=True)
-
-    # 3. Rappi Scraper
     try:
-        rappi_saved = await run_rappi_scraping(conn)
-        total_records += rappi_saved
+        total_records += await run_rappi_scraping(conn)
     except Exception as e:
         print(f"[MAIN ERROR] Rappi Scraper: {e}", flush=True)
-
     return total_records
 
 
@@ -325,7 +298,7 @@ async def trigger_now():
         total_records = await run_all_scraping(conn)
         return {
             "status": "success",
-            "message": f"Monitoreo ejecutado correctamente en Éxito, Carulla, Farmatodo y Rappi. {total_records} productos guardados.",
+            "message": f"Monitoreo ejecutado correctamente. {total_records} productos guardados.",
             "total_records": total_records
         }
     except Exception as e:
@@ -367,7 +340,6 @@ def export_results(
     if date_to:
         query_tendencia += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
         params.append(date_to)
-
     query_tendencia += " ORDER BY id DESC;"
     cursor.execute(query_tendencia, tuple(params))
     rows_tendencia = cursor.fetchall()
@@ -375,10 +347,7 @@ def export_results(
     if not rows_tendencia:
         cursor.close()
         conn.close()
-        raise HTTPException(
-            status_code=404,
-            detail="No se encontraron datos para exportar con los filtros seleccionados."
-        )
+        raise HTTPException(status_code=404, detail="No se encontraron datos para exportar.")
 
     query_resumen = """
         SELECT DISTINCT ON (retailer, search_term, product_name)
@@ -402,7 +371,6 @@ def export_results(
     if date_to:
         query_resumen += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
         params_resumen.append(date_to)
-
     query_resumen += " ORDER BY retailer, search_term, product_name, id DESC;"
     cursor.execute(query_resumen, tuple(params_resumen))
     rows_resumen = cursor.fetchall()
@@ -417,12 +385,10 @@ def export_results(
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_resumen.to_excel(writer, sheet_name="Resumen", index=False)
         df_tendencia.to_excel(writer, sheet_name="Tendencia", index=False)
-
     output.seek(0)
 
     filename = f"digital_shelf_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
-
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
