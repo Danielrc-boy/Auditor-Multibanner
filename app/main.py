@@ -152,6 +152,22 @@ def read_root():
     return {"message": "API Monitoreo Activa"}
 
 
+@app.post("/admin/add-is-active-column")
+def add_is_active_column():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE search_configs ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;")
+        conn.commit()
+        return {"status": "success", "message": "Columna is_active agregada correctamente."}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+
 @app.get("/retailers")
 @app.get("/retailers/")
 def get_retailers():
