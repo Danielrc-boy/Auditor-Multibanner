@@ -18,25 +18,26 @@ class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
         self.retailer = retailer.lower()
         if self.retailer == "carulla":
-            self.base_url = "https://www.carulla.com/api/catalog_system/pub/products/search"
             self.domain = "www.carulla.com"
         else:
-            self.base_url = "https://www.exito.com/api/catalog_system/pub/products/search"
             self.domain = "www.exito.com"
 
-        # Headers estables de navegador real para evitar el 403 de VTEX
+        self.base_url = f"https://{self.domain}/api/catalog_system/pub/products/search"
+
+        # Headers exactos requeridos para bypass directo de Cloudflare/VTEX
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "es-ES,es;q=0.9",
-            "Origin": f"https://{self.domain}",
-            "Referer": f"https://{self.domain}/",
-            "Sec-Ch-Ua": '"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+            "Cache-Control": "max-age=0",
+            "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124"',
             "Sec-Ch-Ua-Mobile": "?0",
             "Sec-Ch-Ua-Platform": '"Windows"',
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin"
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
@@ -47,9 +48,11 @@ class VTEXScraper:
             "_to": limit - 1
         }
         
+        # httpx client simulando navegaicon completa
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
                 response = await client.get(self.base_url, params=params, headers=self.headers)
+                
                 if response.status_code == 200:
                     products = response.json()
                     return self._parse_products(products, clean_term)
