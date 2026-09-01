@@ -77,36 +77,67 @@ class FarmatodoScraper:
 
         return "Sin Marca"
 
-    def _extract_prices_by_percentage(self, item: dict) -> tuple[float, float | None]:
-        # 1. Obtener precio base
+    def _detect_discount_percentage(self, item: dict, title: str) -> float | None:
+        """Extrae el porcentaje dinámicamente mediante Regex desde textos y metadatos."""
+        
+        # 1. Buscar porcentaje numérico directo en campos planos de Algolia
+        for key in ["discountPercent", "discount_percent", "percentage", "discount"]:
+            val = item.get(key)
+            if val is not None:
+                try:
+                    pct = float(val)
+                    if 0 < pct < 100:
+                        return pct
+                except (ValueError, TypeError):
+                    pass
+
+        # 2. Extraer desde el texto del título (ej: "Toallas 15% DCTO", "-20% OFF")
+        match_title = re.search(r'(\d{1,2})\s*%\s*(?:dcto|off|descuento)?', title, re.IGNORECASE)
+        if match_title:
+            try:
+                pct = float(match_title.group(1))
+                if 0 < pct < 100:
+                    return pct
+            except ValueError:
+                pass
+
+        # 3. Buscar patrones en etiquetas o campos de promociones anidados
+        promos = item.get("promotions") or item.get("badges") or item.get("tags") or []
+        promos_text = str(promos)
+        match_promo = re.search(r'(\d{1,2})\s*%', promos_text)
+        if match_promo:
+            try:
+                pct = float(match_promo.group(1))
+                if 0 < pct < 100:
+                    return pct
+            except ValueError:
+                pass
+
+        return None
+
+    def _extract_prices(self, item: dict, title: str) -> tuple[float, float | None]:
+        # Obtener precio base
         base_price = float(item.get("fullPrice") or item.get("price") or 0.0)
         if base_price <= 0:
             return 0.0, None
 
-        # 2. Buscar porcentaje de descuento directo
-        raw_pct = (
-            item.get("discountPercent") or 
-            item.get("discount_percent") or 
-            item.get("percentage") or 
-            item.get("discount")
-        )
-
-        # 3. Buscar porcentaje dentro de promotions si no existe en la raíz
-        if not raw_pct and isinstance(item.get("promotions"), list) and len(item.get("promotions")) > 0:
-            promo = item.get("promotions")[0]
-            if isinstance(promo, dict):
-                raw_pct = promo.get("percent") or promo.get("value") or promo.get("discount")
-
-        # 4. Calcular precio con descuento si se encontró un porcentaje válido
-        discount_price = None
-        if raw_pct is not None:
+        # Intento A: Verificar si 'price' en Algolia ya venía menor que 'fullPrice'
+        full_p = item.get("fullPrice")
+        curr_p = item.get("price")
+        if full_p and curr_p:
             try:
-                pct_val = float(raw_pct)
-                if pct_val > 0:
-                    pct_factor = pct_val / 100.0 if pct_val > 1 else pct_val
-                    discount_price = round(base_price * (1.0 - pct_factor), 2)
+                f_val, c_val = float(full_p), float(curr_p)
+                if 0 < c_val < f_val:
+                    return f_val, c_val
             except (ValueError, TypeError):
                 pass
+
+        # Intento B: Detección dinámica del % de descuento en texto/metadatos
+        pct = self._detect_discount_percentage(item, title)
+        discount_price = None
+
+        if pct is not None:
+            discount_price = round(base_price * (1.0 - (pct / 100.0)), 2)
 
         return base_price, discount_price
 
@@ -122,7 +153,7 @@ class FarmatodoScraper:
                     continue
 
                 final_brand = self._extract_brand(item, title)
-                base_price, discount_price = self._extract_prices_by_percentage(item)
+                base_price, discount_price = self._extract_prices(item, title)
 
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
