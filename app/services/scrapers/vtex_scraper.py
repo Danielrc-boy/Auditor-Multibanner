@@ -15,6 +15,7 @@ class ExtractedProductData:
     is_ad: bool = False
     banner_campaign: str = ""
 
+# 1. Ajuste en VTEXScraper para evitar el 403 de Éxito
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
         self.retailer = retailer.lower()
@@ -53,12 +54,16 @@ class VTEXScraper:
             }
         }
 
+        # Headers mínimos necesarios para superar el filtro WAF de VTEX
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Content-Type": "application/json"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": self.domain,
+            "Referer": f"{self.domain}/"
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
                 response = await client.post(self.graphql_url, json=payload, headers=headers)
                 response.raise_for_status()
@@ -71,49 +76,8 @@ class VTEXScraper:
                 print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{clean_term}': {e}", flush=True)
                 return []
 
-    def _parse_products(self, raw_products: list, search_term: str) -> List[ExtractedProductData]:
-        parsed = []
-        for idx, prod in enumerate(raw_products, start=1):
-            try:
-                title = prod.get("productName", "")
-                brand = prod.get("brand", "Sin Marca")
-                items = prod.get("items", [])
-                
-                base_price = 0.0
-                discount_price = None
-                in_stock = False
 
-                if items:
-                    sellers = items[0].get("sellers", [])
-                    if sellers:
-                        comm = sellers[0].get("commertialOffer", {})
-                        base_price = float(comm.get("ListPrice", 0.0))
-                        price = float(comm.get("Price", 0.0))
-                        
-                        if price < base_price and price > 0:
-                            discount_price = price
-                        elif base_price == 0 and price > 0:
-                            base_price = price
-
-                        available_qty = comm.get("AvailableQuantity", 0)
-                        in_stock = available_qty > 0
-
-                parsed.append(ExtractedProductData(
-                    search_keyword=search_term,
-                    search_position=idx,
-                    title=title,
-                    brand=brand,
-                    base_price=base_price,
-                    discount_price=discount_price,
-                    in_stock=in_stock,
-                    is_ad=False,
-                    banner_campaign=""
-                ))
-            except Exception as e:
-                print(f"[PARSER ERROR] {self.retailer.upper()}: {e}", flush=True)
-                continue
-        return parsed
-
+# 2. Ajuste en run_vtex_scraping para asegurar que procese Carulla y Éxito
 async def run_vtex_scraping(conn) -> int:
     search_configs = []
     with conn.cursor() as cur:
@@ -125,7 +89,7 @@ async def run_vtex_scraping(conn) -> int:
             conn.rollback()
             cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
             rows = cur.fetchall()
-            search_configs = [{"search_term": r["search_term"], "retailer": "exito"} for r in rows] if rows else []
+            search_configs = [{"search_term": r["search_term"], "retailer": "todos"} for r in rows] if rows else []
 
     if not search_configs:
         return 0
@@ -135,12 +99,12 @@ async def run_vtex_scraping(conn) -> int:
 
     for config in search_configs:
         term = config["search_term"]
-        raw_retailer = str(config.get("retailer") or "exito").lower().strip()
+        raw_retailer = str(config.get("retailer") or "todos").lower().strip()
 
-        target_retailers = []
+        # Si no especifica un retailer único, recorre la lista completa
         if raw_retailer in ["exito", "carulla"]:
             target_retailers = [raw_retailer]
-        elif raw_retailer in ["todos", "all", ""]:
+        else:
             target_retailers = ["exito", "carulla"]
 
         for retailer in target_retailers:
