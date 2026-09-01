@@ -3,161 +3,264 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Demo Comercial - Dashboard Multibanner</title>
-    <!-- Tailwind CSS CDN -->
+    <title>Monitor Multibanner E-commerce - Executive BI</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js CDN -->
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: 'Inter', sans-serif; }
+        .glass-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen p-6 font-sans">
+<body class="p-6">
 
-    <!-- Header -->
-    <header class="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
+    <!-- Header Principal -->
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 border-b border-slate-800 pb-4">
         <div>
-            <h1 class="text-2xl font-bold text-white tracking-wide">Monitor Multibanner E-commerce</h1>
-            <p class="text-xs text-slate-400">Auditoría en tiempo real & Share of Shelf</p>
+            <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                Monitor Multibanner E-commerce
+            </h1>
+            <p class="text-slate-400 text-sm mt-1">Auditoría en tiempo real, Share of Shelf & Competitive Intelligence</p>
         </div>
-        <div id="status-badge" class="px-3 py-1 text-xs rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            Conectado al servidor
+        <div class="flex items-center gap-3">
+            <span id="status-badge" class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Sistema Online
+            </span>
+            <button onclick="loadDashboardData()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-lg shadow-indigo-500/20">
+                <i class="fa-solid fa-rotate"></i> Actualizar
+            </button>
         </div>
     </header>
 
-    <!-- Tarjetas de Métricas -->
-    <section class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div class="bg-slate-800/60 border border-slate-700/50 p-4 rounded-xl">
-            <p class="text-xs text-slate-400 uppercase font-semibold">Productos Auditados</p>
-            <h3 id="m-total" class="text-3xl font-bold mt-1 text-white">--</h3>
+    <!-- Barra de Filtros Interactivos -->
+    <section class="glass-card p-4 rounded-xl mb-6 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Retailer</label>
+            <select id="filter-retailer" onchange="loadDashboardData()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500">
+                <option value="ALL">Todos los Retailers</option>
+            </select>
         </div>
-        <div class="bg-slate-800/60 border border-slate-700/50 p-4 rounded-xl">
-            <p class="text-xs text-slate-400 uppercase font-semibold">Disponibilidad (On-Shelf)</p>
-            <h3 id="m-avail" class="text-3xl font-bold mt-1 text-emerald-400">--%</h3>
+        <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Término de Búsqueda</label>
+            <select id="filter-term" onchange="loadDashboardData()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500">
+                <option value="ALL">Todas las Categorías</option>
+            </select>
         </div>
-        <div class="bg-slate-800/60 border border-slate-700/50 p-4 rounded-xl">
-            <p class="text-xs text-slate-400 uppercase font-semibold">Alertas de Agotados</p>
-            <h3 id="m-stockout" class="text-3xl font-bold mt-1 text-rose-400">--</h3>
+        <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Fecha Desde</label>
+            <input type="date" id="filter-date-from" onchange="loadDashboardData()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500">
         </div>
-        <div class="bg-slate-800/60 border border-slate-700/50 p-4 rounded-xl">
-            <p class="text-xs text-slate-400 uppercase font-semibold">Retailers Activos</p>
-            <h3 id="m-retailers" class="text-3xl font-bold mt-1 text-indigo-400">--</h3>
+        <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Fecha Hasta</label>
+            <input type="date" id="filter-date-to" onchange="loadDashboardData()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500">
         </div>
     </section>
 
-    <!-- Gráficos -->
-    <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- Chart: Share of Shelf -->
-        <div class="bg-slate-800/60 border border-slate-700/50 p-5 rounded-xl">
-            <h2 class="text-sm font-semibold text-slate-300 mb-4">Share of Shelf por Retailer (Presencia de Marca)</h2>
-            <div class="relative h-64">
+    <!-- KPIs Principales -->
+    <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+        <div class="glass-card p-4 rounded-xl">
+            <p class="text-xs font-semibold text-slate-400 uppercase">Productos Auditados</p>
+            <h3 id="kpi-total" class="text-2xl font-bold text-white mt-1">-</h3>
+        </div>
+        <div class="glass-card p-4 rounded-xl">
+            <p class="text-xs font-semibold text-slate-400 uppercase">Disponibilidad (On-Shelf)</p>
+            <h3 id="kpi-availability" class="text-2xl font-bold text-emerald-400 mt-1">-</h3>
+        </div>
+        <div class="glass-card p-4 rounded-xl">
+            <p class="text-xs font-semibold text-slate-400 uppercase">Alertas de Agotados</p>
+            <h3 id="kpi-oos" class="text-2xl font-bold text-rose-400 mt-1">-</h3>
+        </div>
+        <div class="glass-card p-4 rounded-xl">
+            <p class="text-xs font-semibold text-slate-400 uppercase">Productos con Promo</p>
+            <h3 id="kpi-promo-count" class="text-2xl font-bold text-amber-400 mt-1">-</h3>
+        </div>
+        <div class="glass-card p-4 rounded-xl">
+            <p class="text-xs font-semibold text-slate-400 uppercase">% Descuento Promedio</p>
+            <h3 id="kpi-promo-pct" class="text-2xl font-bold text-indigo-400 mt-1">-</h3>
+        </div>
+    </section>
+
+    <!-- Gráficos Principales -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- Chart 1: Share of Shelf -->
+        <div class="glass-card p-5 rounded-xl">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-slate-200">Share of Shelf por Retailer (Total vs Top 10)</h3>
+            </div>
+            <div class="h-72">
                 <canvas id="sosChart"></canvas>
             </div>
         </div>
-
-        <!-- Chart: Evolución de Precios -->
-        <div class="bg-slate-800/60 border border-slate-700/50 p-5 rounded-xl">
-            <h2 class="text-sm font-semibold text-slate-300 mb-4">Evolución de Precio Promedio (7 Días)</h2>
-            <div class="relative h-64">
+        <!-- Chart 2: Benchmark Precios -->
+        <div class="glass-card p-5 rounded-xl">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-slate-200">Evolución de Precio Promedio (Essity vs Competencia)</h3>
+            </div>
+            <div class="h-72">
                 <canvas id="priceChart"></canvas>
             </div>
         </div>
     </section>
 
+    <!-- Tabla Comercial de Desglose por Marcas -->
+    <section class="glass-card p-5 rounded-xl">
+        <h3 class="font-bold text-slate-200 mb-4">Resumen de Marcas y Quiebres de Stock</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-300">
+                <thead class="text-xs uppercase bg-slate-800/50 text-slate-400">
+                    <tr>
+                        <th class="p-3">Marca</th>
+                        <th class="p-3 text-center">SKUs Auditados</th>
+                        <th class="p-3 text-center">Quiebres (OOS)</th>
+                        <th class="p-3 text-center">% Disponibilidad</th>
+                        <th class="p-3 text-right">Precio Promedio</th>
+                    </tr>
+                </thead>
+                <tbody id="brand-table-body" class="divide-y divide-slate-800">
+                    <!-- Dinámico -->
+                </tbody>
+            </table>
+        </div>
+    </section>
+
     <script>
-        // BACKUP DATA: Datos en memoria por si el servidor backend se apaga durante el demo
-        const MOCK_DATA = {
-            summary: { total_monitored: 450, availability_rate: 94.2, out_of_stock_alerts: 26, active_retailers: 3 },
-            share_of_shelf: {
-                retailers: ["Exito", "Carulla", "Farmatodo"],
-                essity: [65, 42, 58],
-                competencia: [85, 58, 42]
-            },
-            price_evolution: {
-                labels: ["26 Aug", "27 Aug", "28 Aug", "29 Aug", "30 Aug", "31 Aug", "01 Sep"],
-                prices: [14200, 14200, 13900, 13900, 14100, 14100, 13850]
-            }
-        };
+        let sosChartInstance = null;
+        let priceChartInstance = null;
+        let isFirstLoad = true;
 
-        // Cambiar la URL por la IP/Dominio de producción en Railway
-        const API_ENDPOINT = "https://auditor-multibanner-production.up.railway.app/dashboard-data";
+        async function fetchDashboardData() {
+            const retailer = document.getElementById('filter-retailer').value;
+            const term = document.getElementById('filter-term').value;
+            const dateFrom = document.getElementById('filter-date-from').value;
+            const dateTo = document.getElementById('filter-date-to').value;
 
-        let localData = null;
+            let url = `/dashboard-data?`;
+            if (retailer !== 'ALL') url += `retailer=${encodeURIComponent(retailer)}&`;
+            if (term !== 'ALL') url += `search_term=${encodeURIComponent(term)}&`;
+            if (dateFrom) url += `date_from=${dateFrom}&`;
+            if (dateTo) url += `date_to=${dateTo}&`;
 
-        async function initDashboard() {
-            try {
-                const response = await fetch(API_ENDPOINT);
-                if (!response.ok) throw new Error("Backend offline");
-                localData = await response.json();
-            } catch (err) {
-                console.warn("No se pudo conectar al API. Activando modo Demo Seguro con datos locales.");
-                localData = MOCK_DATA;
-                const badge = document.getElementById("status-badge");
-                badge.textContent = "Modo Offline (Demo Seguro)";
-                badge.className = "px-3 py-1 text-xs rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20";
-            }
-
-            renderMetrics(localData.summary);
-            renderSOSChart(localData.share_of_shelf);
-            renderPriceChart(localData.price_evolution);
+            const res = await fetch(url);
+            return await res.json();
         }
 
-        function renderMetrics(s) {
-            document.getElementById("m-total").textContent = s.total_monitored;
-            document.getElementById("m-avail").textContent = s.availability_rate + "%";
-            document.getElementById("m-stockout").textContent = s.out_of_stock_alerts;
-            document.getElementById("m-retailers").textContent = s.active_retailers;
+        function populateFilters(filters) {
+            if (!isFirstLoad) return;
+            
+            const retSelect = document.getElementById('filter-retailer');
+            filters.retailers.forEach(r => {
+                const opt = document.createElement('option');
+                opt.value = r;
+                opt.textContent = r;
+                retSelect.appendChild(opt);
+            });
+
+            const termSelect = document.getElementById('filter-term');
+            filters.search_terms.forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t;
+                opt.textContent = t;
+                termSelect.appendChild(opt);
+            });
+
+            isFirstLoad = false;
         }
 
-        function renderSOSChart(sos) {
-            const ctx = document.getElementById("sosChart").getContext("2d");
-            new Chart(ctx, {
+        function updateKPIs(summary) {
+            document.getElementById('kpi-total').textContent = summary.total_monitored.toLocaleString();
+            document.getElementById('kpi-availability').textContent = `${summary.availability_rate}%`;
+            document.getElementById('kpi-oos').textContent = summary.out_of_stock_alerts.toLocaleString();
+            document.getElementById('kpi-promo-count').textContent = summary.discounted_count.toLocaleString();
+            document.getElementById('kpi-promo-pct').textContent = `${summary.avg_discount_pct}%`;
+        }
+
+        function renderSosChart(sosData) {
+            const ctx = document.getElementById('sosChart').getContext('2d');
+            if (sosChartInstance) sosChartInstance.destroy();
+
+            sosChartInstance = new Chart(ctx, {
                 type: 'bar',
                 data: {
-                    labels: sos.retailers,
+                    labels: sosData.retailers,
                     datasets: [
-                        { label: 'Essity', data: sos.essity, backgroundColor: '#3b82f6' },
-                        { label: 'Competencia', data: sos.competencia, backgroundColor: '#475569' }
+                        { label: 'Essity (Total)', data: sosData.essity, backgroundColor: '#3b82f6' },
+                        { label: 'Competencia (Total)', data: sosData.competencia, backgroundColor: '#64748b' },
+                        { label: 'Essity (Top 10)', data: sosData.essity_top10, backgroundColor: '#60a5fa' },
                     ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#cbd5e1' } } },
+                    plugins: { legend: { labels: { color: '#94a3b8' } } },
                     scales: {
-                        x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+                        x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
                         y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
                     }
                 }
             });
         }
 
-        function renderPriceChart(p) {
-            const ctx = document.getElementById("priceChart").getContext("2d");
-            new Chart(ctx, {
+        function renderPriceChart(priceData) {
+            const ctx = document.getElementById('priceChart').getContext('2d');
+            if (priceChartInstance) priceChartInstance.destroy();
+
+            priceChartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
-                    labels: p.labels,
-                    datasets: [{
-                        label: 'Precio Promedio ($)',
-                        data: p.prices,
-                        borderColor: '#10b981',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        fill: true,
-                        tension: 0.3
-                    }]
+                    labels: priceData.labels,
+                    datasets: [
+                        { label: 'Essity ($)', data: priceData.essity_prices, borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.3 },
+                        { label: 'Competencia ($)', data: priceData.comp_prices, borderColor: '#f43f5e', backgroundColor: 'transparent', borderDash: [5, 5], tension: 0.3 }
+                    ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#cbd5e1' } } },
+                    plugins: { legend: { labels: { color: '#94a3b8' } } },
                     scales: {
-                        x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+                        x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
                         y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
                     }
                 }
             });
         }
 
-        // Cargar inmediatamente
-        window.addEventListener("DOMContentLoaded", initDashboard);
+        function renderBrandTable(brands) {
+            const tbody = document.getElementById('brand-table-body');
+            tbody.innerHTML = '';
+
+            brands.forEach(b => {
+                const availPct = b.skus > 0 ? (((b.skus - b.oos) / b.skus) * 100).toFixed(1) : 100;
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-800/30 transition";
+                tr.innerHTML = `
+                    <td class="p-3 font-semibold text-slate-100">${b.brand}</td>
+                    <td class="p-3 text-center">${b.skus}</td>
+                    <td class="p-3 text-center text-rose-400 font-medium">${b.oos}</td>
+                    <td class="p-3 text-center font-bold ${availPct < 90 ? 'text-amber-400' : 'text-emerald-400'}">${availPct}%</td>
+                    <td class="p-3 text-right text-indigo-300 font-semibold">$${b.avg_price.toLocaleString()}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function loadDashboardData() {
+            try {
+                const data = await fetchDashboardData();
+                if (isFirstLoad && data.filters) populateFilters(data.filters);
+                updateKPIs(data.summary);
+                renderSosChart(data.share_of_shelf);
+                renderPriceChart(data.price_evolution);
+                renderBrandTable(data.brand_breakdown);
+            } catch (err) {
+                console.error("Error cargando dashboard:", err);
+            }
+        }
+
+        window.onload = loadDashboardData;
     </script>
 </body>
 </html>
