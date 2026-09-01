@@ -27,7 +27,6 @@ class FarmatodoScraper:
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> list:
         clean_term = search_term.strip()
-        
         payload = {
             "requests": [
                 {
@@ -78,51 +77,36 @@ class FarmatodoScraper:
 
         return "Sin Marca"
 
-    def _extract_prices(self, item: dict) -> tuple[float, float | None]:
-        """
-        Extracción precisa de Algolia para Farmatodo:
-        - `fullPrice`: Precio regular sin descuento.
-        - `price`: Precio final tras aplicar ofertas activas en la base de datos de Algolia.
-        """
-        base_price = 0.0
+    def _extract_prices_by_percentage(self, item: dict) -> tuple[float, float | None]:
+        # 1. Obtener precio base
+        base_price = float(item.get("fullPrice") or item.get("price") or 0.0)
+        if base_price <= 0:
+            return 0.0, None
+
+        # 2. Buscar porcentaje de descuento directo
+        raw_pct = (
+            item.get("discountPercent") or 
+            item.get("discount_percent") or 
+            item.get("percentage") or 
+            item.get("discount")
+        )
+
+        # 3. Buscar porcentaje dentro de promotions si no existe en la raíz
+        if not raw_pct and isinstance(item.get("promotions"), list) and len(item.get("promotions")) > 0:
+            promo = item.get("promotions")[0]
+            if isinstance(promo, dict):
+                raw_pct = promo.get("percent") or promo.get("value") or promo.get("discount")
+
+        # 4. Calcular precio con descuento si se encontró un porcentaje válido
         discount_price = None
-
-        # 1. Lectura de campos de precio directo de Algolia
-        raw_full = item.get("fullPrice")
-        raw_current = item.get("price")
-
-        try:
-            full_val = float(raw_full) if raw_full is not None else 0.0
-            current_val = float(raw_current) if raw_current is not None else 0.0
-
-            if full_val > 0 and current_val > 0:
-                if current_val < full_val:
-                    base_price = full_val
-                    discount_price = current_val
-                else:
-                    base_price = full_val
-            elif current_val > 0:
-                base_price = current_val
-            elif full_val > 0:
-                base_price = full_val
-
-        except (ValueError, TypeError):
-            pass
-
-        # 2. Si el descuento viene especificado como un porcentaje de promoción en el objeto `promotions`
-        if discount_price is None and base_price > 0:
-            promotions = item.get("promotions")
-            if isinstance(promotions, list) and len(promotions) > 0:
-                promo = promotions[0]
-                if isinstance(promo, dict):
-                    percent = promo.get("percent") or promo.get("discount") or promo.get("value")
-                    try:
-                        pct = float(percent)
-                        if pct > 0:
-                            pct_factor = pct / 100.0 if pct > 1 else pct
-                            discount_price = round(base_price * (1.0 - pct_factor), 2)
-                    except (ValueError, TypeError):
-                        pass
+        if raw_pct is not None:
+            try:
+                pct_val = float(raw_pct)
+                if pct_val > 0:
+                    pct_factor = pct_val / 100.0 if pct_val > 1 else pct_val
+                    discount_price = round(base_price * (1.0 - pct_factor), 2)
+            except (ValueError, TypeError):
+                pass
 
         return base_price, discount_price
 
@@ -138,7 +122,7 @@ class FarmatodoScraper:
                     continue
 
                 final_brand = self._extract_brand(item, title)
-                base_price, discount_price = self._extract_prices(item)
+                base_price, discount_price = self._extract_prices_by_percentage(item)
 
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
