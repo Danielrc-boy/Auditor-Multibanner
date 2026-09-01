@@ -1,7 +1,19 @@
 import httpx
 import re
+from uuid import UUID
+from dataclasses import dataclass
 from typing import Optional, List
-from app.schemas import ExtractedProductData
+
+@dataclass
+class ExtractedProductData:
+    search_keyword: str
+    search_position: int
+    title: str
+    brand: str
+    base_price: float
+    discount_price: Optional[float]
+    in_stock: bool
+    id: Optional[UUID] = None
 
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
