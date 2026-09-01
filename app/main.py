@@ -169,6 +169,132 @@ def read_root():
     return {"message": "API Monitoreo Activa"}
 
 
+# --- ENDPOINT ADMIN: LIMPIEZA DE BASE DE DATOS ---
+@app.delete("/admin/clean-db")
+def clean_database(confirm: bool = Query(False)):
+    """Elimina todos los registros de scraper_results para reiniciar la captura."""
+    if not confirm:
+        raise HTTPException(
+            status_code=400, 
+            detail="Se requiere el parámetro ?confirm=true para ejecutar la limpieza."
+        )
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE TABLE scraper_results RESTART IDENTITY;")
+            conn.commit()
+            return {
+                "status": "success",
+                "message": "Base de datos truncada correctamente."
+            }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al limpiar BD: {str(e)}")
+    finally:
+        conn.close()
+
+
+# --- ENDPOINT ANALYTICS: TABLA DE POSICIONES Y REFERENCIAS ---
+@app.get("/analytics/positions")
+def get_positions(
+    retailer: Optional[str] = Query(None),
+    brand: Optional[str] = Query(None),
+    search_term: Optional[str] = Query(None),
+    query: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500)
+):
+    """Obtiene el ranking de posición en góndola digital filtrado por referencia o marca."""
+    conn = get_db_connection()
+    try:
+        where_clause = " WHERE 1=1"
+        params = []
+        if retailer and retailer != "ALL":
+            where_clause += " AND retailer ILIKE %s"
+            params.append(f"%{retailer}%")
+        if brand and brand != "ALL":
+            where_clause += " AND brand ILIKE %s"
+            params.append(f"%{brand}%")
+        if search_term and search_term != "ALL":
+            where_clause += " AND search_term ILIKE %s"
+            params.append(f"%{search_term}%")
+        if query:
+            where_clause += " AND product_name ILIKE %s"
+            params.append(f"%{query}%")
+
+        sql = f"""
+            SELECT 
+                retailer,
+                search_term,
+                product_name,
+                COALESCE(brand, 'Sin Marca') as brand,
+                position,
+                price,
+                discount_price,
+                is_available,
+                (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as captured_at
+            FROM scraper_results
+            {where_clause}
+            ORDER BY position ASC, id DESC
+            LIMIT %s;
+        """
+        params.append(limit)
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(params))
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+# --- ENDPOINT ANALYTICS: COMPARADOR HEAD-TO-HEAD DE MARCAS ---
+@app.get("/analytics/compare")
+def compare_brands(
+    brand_a: str = Query(..., description="Primera marca a comparar (ej. Nosotras)"),
+    brand_b: str = Query(..., description="Segunda marca a comparar (ej. Kotex)"),
+    retailer: Optional[str] = Query(None),
+    search_term: Optional[str] = Query(None)
+):
+    """Compara métricas clave (Precios, Promociones, Visibilidad y Stock) entre dos marcas."""
+    conn = get_db_connection()
+    try:
+        where_clause = " WHERE brand ILIKE %s"
+        params_a = [f"%{brand_a}%"]
+        params_b = [f"%{brand_b}%"]
+
+        if retailer and retailer != "ALL":
+            where_clause += " AND retailer ILIKE %s"
+            params_a.append(f"%{retailer}%")
+            params_b.append(f"%{retailer}%")
+        if search_term and search_term != "ALL":
+            where_clause += " AND search_term ILIKE %s"
+            params_a.append(f"%{search_term}%")
+            params_b.append(f"%{search_term}%")
+
+        query_sql = f"""
+            SELECT 
+                COUNT(*) as total_skus,
+                ROUND(AVG(position)::numeric, 1) as avg_position,
+                COUNT(CASE WHEN position <= 10 THEN 1 END) as top10_count,
+                ROUND(AVG(price)::numeric, 0) as avg_price,
+                ROUND(AVG(CASE WHEN discount_price > 0 AND discount_price < price THEN discount_price ELSE price END)::numeric, 0) as avg_final_price,
+                COUNT(CASE WHEN discount_price > 0 AND discount_price < price THEN 1 END) as promo_skus,
+                COUNT(CASE WHEN is_available = FALSE THEN 1 END) as oos_skus
+            FROM scraper_results
+            {where_clause};
+        """
+        with conn.cursor() as cur:
+            cur.execute(query_sql, tuple(params_a))
+            res_a = cur.fetchone()
+            cur.execute(query_sql, tuple(params_b))
+            res_b = cur.fetchone()
+
+        return {
+            "brand_a": {"name": brand_a, "metrics": res_a},
+            "brand_b": {"name": brand_b, "metrics": res_b}
+        }
+    finally:
+        conn.close()
+
+
 # --- ENDPOINT DE DATOS DEL DASHBOARD POTENCIADO Y FILTRABLE ---
 @app.get("/dashboard-data")
 @app.get("/dashboard-data/")
