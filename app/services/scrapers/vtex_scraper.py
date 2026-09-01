@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 
 # ==============================================================================
-# MODELO DE DATOS UNIFICADO (VTEX, FARMATODO Y RETAIL MEDIA)
+# MODELO DE DATOS UNIFICADO (VTEX, FARMATODO, RAPPI Y RETAIL MEDIA)
 # ==============================================================================
 @dataclass
 class ExtractedProductData:
@@ -23,46 +23,51 @@ class ExtractedProductData:
 
 
 # ==============================================================================
-# SCRAPER VTEX (ÉXITO Y CARULLA)
+# SCRAPER VTEX INTELLIGENT SEARCH (ÉXITO Y CARULLA) - BYPASS 403
 # ==============================================================================
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
         self.retailer = retailer.lower()
         self.domain = "https://www.carulla.com" if self.retailer == "carulla" else "https://www.exito.com"
-        self.base_url = f"{self.domain}/api/catalog_system/pub/products/search"
+        
+        # Uso de la API moderna VTEX Intelligent Search (sin bloqueos WAF 403)
+        self.base_url = f"{self.domain}/_v/api/intelligent-search/product_search"
 
-        # Headers actualizados y firmados para evitar bloqueos HTTP 403 en VTEX Cloudflare
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-CO,es;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "Origin": self.domain,
+            "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
             "Referer": f"{self.domain}/",
-            "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Google Chrome";v="124"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin"
+            "Origin": self.domain
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
         clean_term = search_term.strip()
+        
+        # Parámetros oficiales de Intelligent Search
         params = {
-            "ft": clean_term,
-            "_from": 0,
-            "_to": limit - 1
+            "query": clean_term,
+            "count": limit,
+            "page": 1,
+            "locale": "es-CO"
         }
         
-        # httpx estándar sin http2 para evitar falta del paquete 'h2' y con soporte de cookies
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, cookies={"VtexIdclientAutCookie": ""}) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
                 response = await client.get(self.base_url, params=params, headers=self.headers)
+                
+                # Fallback al API clásico si Intelligent Search no responde en la cuenta
+                if response.status_code == 404:
+                    fallback_url = f"{self.domain}/api/catalog_system/pub/products/search"
+                    response = await client.get(fallback_url, params={"ft": clean_term, "_from": 0, "_to": limit - 1}, headers=self.headers)
+
                 response.raise_for_status()
-                products = response.json()
+                data = response.json()
+                
+                # Intelligent Search devuelve los productos bajo la clave 'products'
+                products = data.get("products", []) if isinstance(data, dict) else data
                 return self._parse_products(products, clean_term)
+
             except Exception as e:
                 print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{clean_term}': {e}", flush=True)
                 return []
@@ -71,7 +76,7 @@ class VTEXScraper:
         parsed = []
         for idx, prod in enumerate(raw_products, start=1):
             try:
-                title = prod.get("productName", "")
+                title = prod.get("productName") or prod.get("productTitle") or ""
                 brand = prod.get("brand", "Sin Marca")
                 items = prod.get("items", [])
                 
@@ -85,6 +90,7 @@ class VTEXScraper:
                         comm = sellers[0].get("commertialOffer", {})
                         base_price = float(comm.get("ListPrice", 0.0))
                         price = float(comm.get("Price", 0.0))
+                        
                         if price < base_price and price > 0:
                             discount_price = price
                         elif base_price == 0 and price > 0:
@@ -111,7 +117,7 @@ class VTEXScraper:
 
 
 # ==============================================================================
-# SCRAPER FARMATODO (ALGOLIA ENGINE + BLINDAJE DE TIPOS Y PAUTA)
+# SCRAPER FARMATODO (ALGOLIA ENGINE - SIN HTTP2)
 # ==============================================================================
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
@@ -137,7 +143,6 @@ class FarmatodoScraper:
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
         clean_term = search_term.strip()
         
-        # Payload con estructura estándar params para Algolia
         payload = {
             "requests": [
                 {
@@ -147,14 +152,13 @@ class FarmatodoScraper:
             ]
         }
 
-        # Sin http2=True para evitar errores de librerías faltantes
+        # http2 desactivado por defecto para prevenir fallos en contenedores sin 'h2'
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(self.endpoint, headers=self.headers, json=payload)
                 response.raise_for_status()
                 data = response.json()
                 
-                # Validación estricta de respuesta para solucionar 'NoneType' object is not iterable
                 results = data.get("results")
                 if not results or not isinstance(results, list):
                     return []
@@ -315,7 +319,7 @@ class FarmatodoScraper:
 
 
 # ==============================================================================
-# FUNCIÓN PRINCIPAL DE EJECUCIÓN DEL SCRAPING Y PERSISTENCIA
+# FUNCIÓN PRINCIPAL Y ORQUESTADOR DE RETAILERS
 # ==============================================================================
 async def run_vtex_scraping(conn) -> int:
     search_configs = []
