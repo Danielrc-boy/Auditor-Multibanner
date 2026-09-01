@@ -21,7 +21,7 @@ class ExtractedProductData:
 
 
 # ==============================================================================
-# SCRAPER VTEX GRAPHQL (ÉXITO Y CARULLA) - HEADERS ANTI-403 WAF
+# SCRAPER VTEX GRAPHQL (ÉXITO Y CARULLA) - ESTABLE CON HEADERS NATIVOS
 # ==============================================================================
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
@@ -29,20 +29,12 @@ class VTEXScraper:
         self.domain = "https://www.carulla.com" if self.retailer == "carulla" else "https://www.exito.com"
         self.graphql_url = f"{self.domain}/_v/public/graphql/v1"
 
-        # Headers impersonados de navegador real para evadir Cloudflare/WAF 403
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-CO,es-ES;q=0.9,es;q=0.8,en;q=0.7",
+            "Accept": "*/*",
             "Content-Type": "application/json",
             "Origin": self.domain,
-            "Referer": f"{self.domain}/",
-            "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin"
+            "Referer": f"{self.domain}/"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
@@ -100,7 +92,7 @@ class VTEXScraper:
                 
                 base_price = 0.0
                 discount_price = None
-                in_stock = False
+                in_stock = True
 
                 if items:
                     sellers = items[0].get("sellers", [])
@@ -135,7 +127,7 @@ class VTEXScraper:
 
 
 # ==============================================================================
-# SCRAPER FARMATODO (FILTRADO DE CAMPAÑAS Y VALIDACIÓN DE PALABRA CLAVE)
+# SCRAPER FARMATODO (VERSIÓN BASE ESTABLE)
 # ==============================================================================
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
@@ -155,7 +147,7 @@ class FarmatodoScraper:
             "x-algolia-application-id": FARMATODO_APP_ID.strip(),
             "x-algolia-api-key": FARMATODO_API_KEY.strip(),
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
@@ -165,7 +157,7 @@ class FarmatodoScraper:
             "requests": [
                 {
                     "indexName": FARMATODO_INDEX_NAME,
-                    "params": f"query={clean_term}&hitsPerPage={limit}&getRankingInfo=true"
+                    "params": f"query={clean_term}&hitsPerPage={limit}"
                 }
             ]
         }
@@ -180,11 +172,8 @@ class FarmatodoScraper:
                 if not results or not isinstance(results, list):
                     return []
                 
-                result_obj = results[0]
-                hits = result_obj.get("hits") or []
-
-                banner_campaign = self._extract_banner_negotiation(result_obj, clean_term)
-                return self._parse_products(hits, clean_term, banner_campaign)
+                hits = results[0].get("hits") or []
+                return self._parse_products(hits, clean_term)
 
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{clean_term}': {e}", flush=True)
@@ -208,26 +197,10 @@ class FarmatodoScraper:
 
         return "Sin Marca"
 
-    def _extract_banner_negotiation(self, result_obj: dict, search_term: str) -> str:
-        """Extrae banners únicamente si corresponden a la búsqueda actual."""
-        user_data_list = result_obj.get("userData") or []
-        if isinstance(user_data_list, list):
-            for data_item in user_data_list:
-                if isinstance(data_item, dict):
-                    banner_title = data_item.get("banner") or data_item.get("title") or data_item.get("campaign")
-                    if banner_title:
-                        # Si el banner contiene relación con el término buscado, asignarlo
-                        term_words = set(search_term.lower().split())
-                        banner_words = set(str(banner_title).lower().split())
-                        if term_words.intersection(banner_words):
-                            return str(banner_title).strip()
-        return ""
-
-    def _parse_products(self, raw_hits: list, search_term: str, global_banner: str = "") -> List[ExtractedProductData]:
+    def _parse_products(self, raw_hits: list, search_term: str) -> List[ExtractedProductData]:
         parsed_results = []
-        valid_position = 1
 
-        for item in raw_hits:
+        for idx, item in enumerate(raw_hits, start=1):
             if not isinstance(item, dict):
                 continue
             try:
@@ -236,45 +209,25 @@ class FarmatodoScraper:
                 if not title:
                     continue
 
-                # Filtrado de relevancia de búsqueda para evitar productos fuera de contexto (ej. Agua)
-                first_keyword = search_term.lower().split()[0]
-                if len(first_keyword) > 3 and first_keyword not in title.lower():
-                    # Si el título no guarda ninguna relación semántica, saltar el hit engañoso de Algolia
-                    continue
-
                 final_brand = self._extract_brand(item, title)
                 
                 base_price = float(item.get("fullPrice") or item.get("price") or 0.0)
                 curr_price = float(item.get("price") or 0.0)
                 
                 discount_price = curr_price if (0 < curr_price < base_price) else None
-
                 in_stock = not bool(item.get("outofstore", False))
 
-                ranking_info = item.get("_rankingInfo") or {}
-                is_ad = bool(
-                    item.get("sponsored") or 
-                    item.get("isSponsored") or 
-                    ranking_info.get("promoted", False)
-                )
-
-                # Asignación de campaña solo si es producto pautado o coincide con el banner
-                item_banner = str(item.get("bannerCampaign") or item.get("campaign") or "").strip()
-                banner_campaign = item_banner if item_banner else (global_banner if is_ad else "")
-
-                product = ExtractedProductData(
+                parsed_results.append(ExtractedProductData(
                     search_keyword=search_term,
-                    search_position=valid_position,
+                    search_position=idx,
                     title=title,
                     brand=final_brand,
                     base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock,
-                    is_ad=is_ad,
-                    banner_campaign=banner_campaign
-                )
-                parsed_results.append(product)
-                valid_position += 1
+                    is_ad=False,
+                    banner_campaign=""
+                ))
 
             except Exception as e:
                 print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
