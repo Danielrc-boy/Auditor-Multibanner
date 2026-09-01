@@ -1,6 +1,5 @@
 import httpx
 import re
-import urllib.parse
 from dataclasses import dataclass
 from typing import Optional, List
 
@@ -18,45 +17,66 @@ class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
         self.retailer = retailer.lower()
         if self.retailer == "carulla":
+            self.account = "carulla"
             self.domain = "www.carulla.com"
         else:
+            self.account = "exito"
             self.domain = "www.exito.com"
 
-        self.base_url = f"https://{self.domain}/api/catalog_system/pub/products/search"
+        # Endpoint GraphQL de VTEX IO (omite filtros WAF REST)
+        self.graphql_url = f"https://{self.domain}/_v/segment/graphql/v1"
 
-        # Headers exactos requeridos para bypass directo de Cloudflare/VTEX
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "es-ES,es;q=0.9",
-            "Cache-Control": "max-age=0",
-            "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Upgrade-Insecure-Requests": "1"
+            "Content-Type": "application/json",
+            "Accept": "*/*",
+            "Origin": f"https://{self.domain}",
+            "Referer": f"https://{self.domain}/"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
         clean_term = search_term.strip()
-        params = {
-            "ft": clean_term,
-            "_from": 0,
-            "_to": limit - 1
-        }
         
-        # httpx client simulando navegaicon completa
+        # Query optimizada de GraphQL para catálogo VTEX
+        query = """
+        query productSearch($fullText: String, $from: Int, $to: Int) {
+          productSearch(fullText: $fullText, from: $from, to: $to) {
+            products {
+              productName
+              brand
+              items {
+                sellers {
+                  commertialOffer {
+                    ListPrice
+                    Price
+                    AvailableQuantity
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+
+        payload = {
+            "query": query,
+            "variables": {
+                "fullText": clean_term,
+                "from": 0,
+                "to": limit - 1
+            }
+        }
+
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
-                response = await client.get(self.base_url, params=params, headers=self.headers)
+                response = await client.post(self.graphql_url, json=payload, headers=self.headers)
                 
                 if response.status_code == 200:
-                    products = response.json()
-                    return self._parse_products(products, clean_term)
-                
+                    data = response.json()
+                    products = data.get("data", {}).get("productSearch", {}).get("products", [])
+                    if products:
+                        return self._parse_products(products, clean_term)
+
                 print(f"[ERROR {self.retailer.upper()}] Status Code: {response.status_code}", flush=True)
                 return []
 
