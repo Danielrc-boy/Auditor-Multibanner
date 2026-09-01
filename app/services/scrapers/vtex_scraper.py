@@ -19,18 +19,24 @@ class VTEXScraper:
         self.retailer = retailer.lower()
         if self.retailer == "carulla":
             self.base_url = "https://www.carulla.com/api/catalog_system/pub/products/search"
-            self.host = "www.carulla.com"
+            self.domain = "www.carulla.com"
         else:
             self.base_url = "https://www.exito.com/api/catalog_system/pub/products/search"
-            self.host = "www.exito.com"
+            self.domain = "www.exito.com"
 
-        # Headers de App Móvil para bypass definitivo del 403 de VTEX/Cloudflare
+        # Headers estables de navegador real para evitar el 403 de VTEX
         self.headers = {
-            "User-Agent": "okhttp/4.9.2",
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate",
-            "Host": self.host,
-            "Connection": "keep-alive"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "es-ES,es;q=0.9",
+            "Origin": f"https://{self.domain}",
+            "Referer": f"https://{self.domain}/",
+            "Sec-Ch-Ua": '"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
@@ -41,11 +47,9 @@ class VTEXScraper:
             "_to": limit - 1
         }
         
-        # Desactivamos HTTP/2 para imitar la conexión socket limpia de cliente Android/iOS
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, http2=False) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
                 response = await client.get(self.base_url, params=params, headers=self.headers)
-                
                 if response.status_code == 200:
                     products = response.json()
                     return self._parse_products(products, clean_term)
