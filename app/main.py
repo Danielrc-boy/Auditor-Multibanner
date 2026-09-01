@@ -410,3 +410,23 @@ def export_results(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers
     )
+
+
+@app.get("/exec-sql")
+def execute_sql_query(sql: str):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            if cur.description:
+                results = cur.fetchall()
+                conn.commit()
+                return {"status": "ok", "data": results}
+            else:
+                conn.commit()
+                return {"status": "ok", "message": f"Filas afectadas: {cur.rowcount}"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=f"Error SQL: {str(e)}")
+    finally:
+        conn.close()
