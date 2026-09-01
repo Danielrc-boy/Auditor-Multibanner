@@ -1,86 +1,153 @@
-import os
-import urllib.parse
 import httpx
-from app.services.scrapers.vtex_scraper import ExtractedProductData
+import re
+from typing import Optional, List
+from app.schemas import ExtractedProductData
 
-class FarmatodoScraper:
-    def __init__(self):
-        raw_app_id = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
-        self.app_id = raw_app_id.strip()
-        self.app_id_lower = self.app_id.lower()
-        
-        self.api_key = os.getenv("ALGOLIA_API_KEY", "eb9544fe7bfe7ec4c1aa5e5bf7740feb").strip()
-        self.index_name = os.getenv("ALGOLIA_INDEX_NAME", "products-colombia").strip()
-        
-        self.endpoint = f"https://{self.app_id_lower}-dsn.algolia.net/1/indexes/*/queries"
+class VTEXScraper:
+    def __init__(self, retailer: str = "exito"):
+        self.retailer = retailer.lower()
+        if self.retailer == "carulla":
+            self.domain = "www.carulla.com"
+        else:
+            self.domain = "www.exito.com"
 
-    async def search_keyword(self, search_term: str, limit: int = 50) -> list:
-        headers = {
-            "x-algolia-application-id": self.app_id,
-            "x-algolia-api-key": self.api_key,
+        self.graphql_url = f"https://{self.domain}/_v/segment/graphql/v1"
+
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Origin": "https://www.farmatodo.com.co",
-            "Referer": "https://www.farmatodo.com.co/"
+            "Accept": "*/*",
+            "Origin": f"https://{self.domain}",
+            "Referer": f"https://{self.domain}/"
         }
 
-        params_str = f"query={urllib.parse.quote(search_term)}&hitsPerPage={limit}&page=0"
-        payload = {
-            "requests": [
-                {
-                    "indexName": self.index_name,
-                    "params": params_str
+    async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
+        clean_term = search_term.strip()
+        
+        graphql_query = """
+        query productSearch($fullText: String, $from: Int, $to: Int) {
+          productSearch(fullText: $fullText, from: $from, to: $to) {
+            products {
+              productName
+              brand
+              items {
+                sellers {
+                  commertialOffer {
+                    ListPrice
+                    Price
+                    AvailableQuantity
+                  }
                 }
-            ]
+              }
+            }
+          }
+        }
+        """
+
+        payload = {
+            "query": graphql_query,
+            "variables": {
+                "fullText": clean_term,
+                "from": 0,
+                "to": limit - 1
+            }
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
-                response = await client.post(self.endpoint, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+                response = await client.post(self.graphql_url, json=payload, headers=self.headers)
                 
-                results = data.get("results", [])
-                if not results:
-                    return []
-                
-                hits = results[0].get("hits", [])
-                return self._parse_products(hits, search_term)
+                if response.status_code == 200:
+                    data = response.json()
+                    products = data.get("data", {}).get("productSearch", {}).get("products", [])
+                    if products:
+                        return self._parse_products(products, clean_term)
 
-            except Exception as e:
-                print(f"[ERROR FARMATODO] Error al scrapear '{search_term}': {e}", flush=True)
+                print(f"[ERROR {self.retailer.upper()}] Status Code: {response.status_code}", flush=True)
                 return []
 
-    def _parse_products(self, raw_hits: list, search_term: str) -> list:
-        parsed_results = []
-        for index, item in enumerate(raw_hits, start=1):
+            except Exception as e:
+                print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{clean_term}': {e}", flush=True)
+                return []
+
+    def _parse_products(self, raw_products: list, search_term: str) -> List[ExtractedProductData]:
+        parsed = []
+        for idx, prod in enumerate(raw_products, start=1):
             try:
-                title = item.get("description") or item.get("name") or item.get("title") or item.get("brand", "Sin título")
+                title = prod.get("productName", "")
+                brand = prod.get("brand", "Sin Marca")
+                items = prod.get("items", [])
                 
-                price_regular = float(item.get("price", 0.0) or item.get("priceRegular", 0.0))
-                price_offer = float(item.get("offerPrice", 0.0) or item.get("priceOffer", 0.0) or price_regular)
-                
-                if price_offer > 0 and price_offer < price_regular:
-                    base_price = price_regular
-                    discount_price = price_offer
-                else:
-                    base_price = price_regular if price_regular > 0 else price_offer
-                    discount_price = None
+                base_price = 0.0
+                discount_price = None
+                in_stock = False
 
-                stock = item.get("stock", 0)
-                available = stock > 0 if stock is not None else True
+                if items:
+                    sellers = items[0].get("sellers", [])
+                    if sellers:
+                        comm = sellers[0].get("commertialOffer", {})
+                        base_price = float(comm.get("ListPrice", 0.0))
+                        price = float(comm.get("Price", 0.0))
+                        if price < base_price and price > 0:
+                            discount_price = price
+                        elif base_price == 0 and price > 0:
+                            base_price = price
 
-                product = ExtractedProductData(
+                        available_qty = comm.get("AvailableQuantity", 0)
+                        in_stock = available_qty > 0
+
+                parsed.append(ExtractedProductData(
                     search_keyword=search_term,
-                    search_position=index,
+                    search_position=idx,
                     title=title,
+                    brand=brand,
                     base_price=base_price,
                     discount_price=discount_price,
-                    in_stock=available
-                )
-                parsed_results.append(product)
+                    in_stock=in_stock
+                ))
             except Exception as e:
-                print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
+                print(f"[PARSER ERROR] {self.retailer.upper()}: {e}", flush=True)
                 continue
+        return parsed
 
-        return parsed_results
+async def run_vtex_scraping(conn) -> int:
+    search_configs = []
+    with conn.cursor() as cur:
+        try:
+            cur.execute("SELECT search_term, retailer FROM search_configs WHERE is_active = TRUE;")
+            rows = cur.fetchall()
+            search_configs = rows if rows else []
+        except Exception:
+            conn.rollback()
+            cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
+            rows = cur.fetchall()
+            search_configs = [{"search_term": r["search_term"], "retailer": "exito"} for r in rows] if rows else []
+
+    if not search_configs:
+        return 0
+
+    total_saved = 0
+    from app.main import save_scraper_results
+
+    for config in search_configs:
+        term = config["search_term"]
+        raw_retailer = str(config.get("retailer") or "exito").lower().strip()
+
+        target_retailers = []
+        if raw_retailer in ["exito", "carulla"]:
+            target_retailers = [raw_retailer]
+        elif raw_retailer in ["todos", "all", ""]:
+            target_retailers = ["exito", "carulla"]
+
+        for retailer in target_retailers:
+            scraper = VTEXScraper(retailer=retailer)
+            try:
+                results = await scraper.search_keyword(term, limit=50)
+                if results:
+                    count = save_scraper_results(conn, results, retailer=retailer)
+                    total_saved += count
+                    print(f"[{retailer.upper()}] Guardados {count} para '{term}'.", flush=True)
+            except Exception as e:
+                print(f"[SCRAPING ERROR] {retailer.upper()} '{term}': {e}", flush=True)
+
+    return total_saved

@@ -1,7 +1,7 @@
 import os
 import time
 import httpx
-from app.services.scrapers.vtex_scraper import ExtractedProductData
+from app.schemas import ExtractedProductData
 
 
 class RappiScraper:

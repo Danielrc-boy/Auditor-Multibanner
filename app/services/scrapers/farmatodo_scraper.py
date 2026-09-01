@@ -3,7 +3,7 @@ import re
 import urllib.parse
 import unicodedata
 import httpx
-from app.services.scrapers.vtex_scraper import ExtractedProductData
+from app.schemas import ExtractedProductData
 
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
