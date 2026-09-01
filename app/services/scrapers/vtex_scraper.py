@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 
 # ==============================================================================
-# MODELO DE DATOS UNIFICADO (VTEX, FARMATODO, RAPPI Y RETAIL MEDIA)
+# MODELO DE DATOS UNIFICADO
 # ==============================================================================
 @dataclass
 class ExtractedProductData:
@@ -17,56 +17,68 @@ class ExtractedProductData:
     base_price: float
     discount_price: Optional[float]
     in_stock: bool
-    # Campos para Retail Media y Pauta Pagada
     is_ad: bool = False
     banner_campaign: str = ""
 
 
 # ==============================================================================
-# SCRAPER VTEX INTELLIGENT SEARCH (ÉXITO Y CARULLA) - BYPASS 403
+# SCRAPER VTEX GRAPHQL (ÉXITO Y CARULLA - BYPASS COMPLETO 403)
 # ==============================================================================
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
         self.retailer = retailer.lower()
         self.domain = "https://www.carulla.com" if self.retailer == "carulla" else "https://www.exito.com"
-        
-        # Uso de la API moderna VTEX Intelligent Search (sin bloqueos WAF 403)
-        self.base_url = f"{self.domain}/_v/api/intelligent-search/product_search"
+        self.graphql_url = f"{self.domain}/_v/public/graphql/v1"
 
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
-            "Referer": f"{self.domain}/",
-            "Origin": self.domain
+            "Content-Type": "application/json",
+            "Accept": "*/*",
+            "Origin": self.domain,
+            "Referer": f"{self.domain}/"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
         clean_term = search_term.strip()
         
-        # Parámetros oficiales de Intelligent Search
-        params = {
-            "query": clean_term,
-            "count": limit,
-            "page": 1,
-            "locale": "es-CO"
+        # Query GraphQL que utiliza el motor de la tienda sin pasar por WAF rest
+        query = """
+        query ProductSearch($fullText: String, $from: Int, $to: Int) {
+          productSearch(fullText: $fullText, from: $from, to: $to) {
+            products {
+              productName
+              brand
+              items {
+                sellers {
+                  commertialOffer {
+                    ListPrice
+                    Price
+                    AvailableQuantity
+                  }
+                }
+              }
+            }
+          }
         }
+        """
         
+        payload = {
+            "query": query,
+            "variables": {
+                "fullText": clean_term,
+                "from": 0,
+                "to": limit - 1
+            }
+        }
+
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             try:
-                response = await client.get(self.base_url, params=params, headers=self.headers)
-                
-                # Fallback al API clásico si Intelligent Search no responde en la cuenta
-                if response.status_code == 404:
-                    fallback_url = f"{self.domain}/api/catalog_system/pub/products/search"
-                    response = await client.get(fallback_url, params={"ft": clean_term, "_from": 0, "_to": limit - 1}, headers=self.headers)
-
+                response = await client.post(self.graphql_url, json=payload, headers=self.headers)
                 response.raise_for_status()
                 data = response.json()
                 
-                # Intelligent Search devuelve los productos bajo la clave 'products'
-                products = data.get("products", []) if isinstance(data, dict) else data
-                return self._parse_products(products, clean_term)
+                products_data = data.get("data", {}).get("productSearch", {}).get("products", [])
+                return self._parse_products(products_data, clean_term)
 
             except Exception as e:
                 print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{clean_term}': {e}", flush=True)
@@ -76,7 +88,7 @@ class VTEXScraper:
         parsed = []
         for idx, prod in enumerate(raw_products, start=1):
             try:
-                title = prod.get("productName") or prod.get("productTitle") or ""
+                title = prod.get("productName", "")
                 brand = prod.get("brand", "Sin Marca")
                 items = prod.get("items", [])
                 
@@ -117,7 +129,7 @@ class VTEXScraper:
 
 
 # ==============================================================================
-# SCRAPER FARMATODO (ALGOLIA ENGINE - SIN HTTP2)
+# SCRAPER FARMATODO (ALGOLIA ENGINE)
 # ==============================================================================
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
@@ -152,7 +164,7 @@ class FarmatodoScraper:
             ]
         }
 
-        # http2 desactivado por defecto para prevenir fallos en contenedores sin 'h2'
+        # Sin parametro http2 para prevenir bloqueos de despliegue
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(self.endpoint, headers=self.headers, json=payload)
@@ -319,7 +331,7 @@ class FarmatodoScraper:
 
 
 # ==============================================================================
-# FUNCIÓN PRINCIPAL Y ORQUESTADOR DE RETAILERS
+# EJECUCIÓN GENERAL
 # ==============================================================================
 async def run_vtex_scraping(conn) -> int:
     search_configs = []
