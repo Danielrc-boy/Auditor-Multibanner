@@ -1,6 +1,8 @@
 import os
 import re
 import httpx
+from typing import List
+from uuid import UUID, uuid4
 from app.schemas import ExtractedProductData
 
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
