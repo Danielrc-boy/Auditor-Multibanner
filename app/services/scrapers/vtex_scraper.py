@@ -28,21 +28,19 @@ class ExtractedProductData:
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
         self.retailer = retailer.lower()
-        if self.retailer == "carulla":
-            self.base_url = "https://www.carulla.com/api/catalog_system/pub/products/search"
-            self.domain = "https://www.carulla.com"
-        else:
-            self.base_url = "https://www.exito.com/api/catalog_system/pub/products/search"
-            self.domain = "https://www.exito.com"
+        self.domain = "https://www.carulla.com" if self.retailer == "carulla" else "https://www.exito.com"
+        self.base_url = f"{self.domain}/api/catalog_system/pub/products/search"
 
-        # Headers anti-bot completos para evitar el error HTTP 403 Forbidden
+        # Headers actualizados y firmados para evitar bloqueos HTTP 403 en VTEX Cloudflare
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+            "Accept-Language": "es-CO,es;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
             "Origin": self.domain,
             "Referer": f"{self.domain}/",
-            "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Google Chrome";v="124"',
             "Sec-Ch-Ua-Mobile": "?0",
             "Sec-Ch-Ua-Platform": '"Windows"',
             "Sec-Fetch-Dest": "empty",
@@ -58,7 +56,8 @@ class VTEXScraper:
             "_to": limit - 1
         }
         
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        # httpx estándar sin http2 para evitar falta del paquete 'h2' y con soporte de cookies
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, cookies={"VtexIdclientAutCookie": ""}) as client:
             try:
                 response = await client.get(self.base_url, params=params, headers=self.headers)
                 response.raise_for_status()
@@ -112,7 +111,7 @@ class VTEXScraper:
 
 
 # ==============================================================================
-# SCRAPER FARMATODO (ALGOLIA + RETAIL MEDIA + DESCUENTOS DINÁMICOS)
+# SCRAPER FARMATODO (ALGOLIA ENGINE + BLINDAJE DE TIPOS Y PAUTA)
 # ==============================================================================
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
@@ -132,36 +131,43 @@ class FarmatodoScraper:
             "x-algolia-application-id": FARMATODO_APP_ID.strip(),
             "x-algolia-api-key": FARMATODO_API_KEY.strip(),
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
         clean_term = search_term.strip()
+        
+        # Payload con estructura estándar params para Algolia
         payload = {
             "requests": [
                 {
                     "indexName": FARMATODO_INDEX_NAME,
-                    "query": clean_term,
-                    "hitsPerPage": limit,
-                    "getRankingInfo": True
+                    "params": f"query={clean_term}&hitsPerPage={limit}&getRankingInfo=true"
                 }
             ]
         }
 
+        # Sin http2=True para evitar errores de librerías faltantes
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(self.endpoint, headers=self.headers, json=payload)
                 response.raise_for_status()
                 data = response.json()
                 
-                results = data.get("results", [])
-                if not results:
+                # Validación estricta de respuesta para solucionar 'NoneType' object is not iterable
+                results = data.get("results")
+                if not results or not isinstance(results, list):
                     return []
                 
                 result_obj = results[0]
-                hits = result_obj.get("hits", [])
-                banner_campaign = self._extract_banner_negotiation(result_obj)
+                if not isinstance(result_obj, dict):
+                    return []
+                
+                hits = result_obj.get("hits")
+                if hits is None or not isinstance(hits, list):
+                    hits = []
 
+                banner_campaign = self._extract_banner_negotiation(result_obj)
                 return self._parse_products(hits, clean_term, banner_campaign)
 
             except Exception as e:
@@ -169,7 +175,7 @@ class FarmatodoScraper:
                 return []
 
     def _extract_brand(self, item: dict, title: str) -> str:
-        raw_brand = item.get("brandName") or item.get("marca") or item.get("brand_name")
+        raw_brand = item.get("brandName") or item.get("marca") or item.get("brand_name") or item.get("brand")
         
         if isinstance(raw_brand, dict):
             raw_brand = raw_brand.get("name") or raw_brand.get("label")
@@ -192,17 +198,16 @@ class FarmatodoScraper:
         return "Sin Marca"
 
     def _extract_banner_negotiation(self, result_obj: dict) -> str:
-        """Detecta si la consulta activó un banner publicitario vía Algolia UserData."""
-        user_data_list = result_obj.get("userData", [])
-        for data_item in user_data_list:
-            if isinstance(data_item, dict):
-                banner_title = data_item.get("banner") or data_item.get("title") or data_item.get("campaign")
-                if banner_title:
-                    return str(banner_title)
+        user_data_list = result_obj.get("userData") or []
+        if isinstance(user_data_list, list):
+            for data_item in user_data_list:
+                if isinstance(data_item, dict):
+                    banner_title = data_item.get("banner") or data_item.get("title") or data_item.get("campaign")
+                    if banner_title:
+                        return str(banner_title).strip()
         return ""
 
     def _detect_discount_percentage(self, item: dict, title: str) -> Optional[float]:
-        """Extrae dinámicamente el porcentaje de descuento mediante Regex y Atributos."""
         for key in ["discountPercent", "discount_percent", "percentage", "discount"]:
             val = item.get(key)
             if val is not None:
@@ -257,11 +262,13 @@ class FarmatodoScraper:
 
         return base_price, discount_price
 
-    def _parse_products(self, raw_hits: list, search_term: str, banner_campaign: str) -> List[ExtractedProductData]:
+    def _parse_products(self, raw_hits: list, search_term: str, global_banner: str = "") -> List[ExtractedProductData]:
         parsed_results = []
         valid_position = 1
 
         for item in raw_hits:
+            if not isinstance(item, dict):
+                continue
             try:
                 title = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title = str(title).strip()
@@ -274,14 +281,17 @@ class FarmatodoScraper:
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
-                # Detección de Retail Media (+ Ad / Pauta)
+                ranking_info = item.get("_rankingInfo") or {}
                 is_ad = bool(
-                    item.get("isSponsored") or 
                     item.get("sponsored") or 
+                    item.get("isSponsored") or 
+                    item.get("is_ad") or 
                     item.get("isAd") or 
                     item.get("ad") or
-                    item.get("_rankingInfo", {}).get("promoted", False)
+                    ranking_info.get("promoted", False)
                 )
+
+                banner_campaign = str(item.get("bannerCampaign") or item.get("campaign") or global_banner).strip()
 
                 product = ExtractedProductData(
                     search_keyword=search_term,
