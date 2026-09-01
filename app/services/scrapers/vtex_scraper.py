@@ -1,6 +1,5 @@
 import os
 import re
-import unicodedata
 import httpx
 from dataclasses import dataclass
 from typing import Optional, List
@@ -22,7 +21,7 @@ class ExtractedProductData:
 
 
 # ==============================================================================
-# SCRAPER VTEX GRAPHQL (ÉXITO Y CARULLA - BYPASS COMPLETO 403)
+# SCRAPER VTEX GRAPHQL (ÉXITO Y CARULLA) - HEADERS ANTI-403 WAF
 # ==============================================================================
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
@@ -30,18 +29,25 @@ class VTEXScraper:
         self.domain = "https://www.carulla.com" if self.retailer == "carulla" else "https://www.exito.com"
         self.graphql_url = f"{self.domain}/_v/public/graphql/v1"
 
+        # Headers impersonados de navegador real para evadir Cloudflare/WAF 403
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "es-CO,es-ES;q=0.9,es;q=0.8,en;q=0.7",
             "Content-Type": "application/json",
-            "Accept": "*/*",
             "Origin": self.domain,
-            "Referer": f"{self.domain}/"
+            "Referer": f"{self.domain}/",
+            "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
         clean_term = search_term.strip()
         
-        # Query GraphQL que utiliza el motor de la tienda sin pasar por WAF rest
         query = """
         query ProductSearch($fullText: String, $from: Int, $to: Int) {
           productSearch(fullText: $fullText, from: $from, to: $to) {
@@ -129,7 +135,7 @@ class VTEXScraper:
 
 
 # ==============================================================================
-# SCRAPER FARMATODO (ALGOLIA ENGINE)
+# SCRAPER FARMATODO (FILTRADO DE CAMPAÑAS Y VALIDACIÓN DE PALABRA CLAVE)
 # ==============================================================================
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
@@ -149,7 +155,7 @@ class FarmatodoScraper:
             "x-algolia-application-id": FARMATODO_APP_ID.strip(),
             "x-algolia-api-key": FARMATODO_API_KEY.strip(),
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
         }
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
@@ -164,7 +170,6 @@ class FarmatodoScraper:
             ]
         }
 
-        # Sin parametro http2 para prevenir bloqueos de despliegue
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(self.endpoint, headers=self.headers, json=payload)
@@ -176,14 +181,9 @@ class FarmatodoScraper:
                     return []
                 
                 result_obj = results[0]
-                if not isinstance(result_obj, dict):
-                    return []
-                
-                hits = result_obj.get("hits")
-                if hits is None or not isinstance(hits, list):
-                    hits = []
+                hits = result_obj.get("hits") or []
 
-                banner_campaign = self._extract_banner_negotiation(result_obj)
+                banner_campaign = self._extract_banner_negotiation(result_obj, clean_term)
                 return self._parse_products(hits, clean_term, banner_campaign)
 
             except Exception as e:
@@ -199,12 +199,7 @@ class FarmatodoScraper:
             raw_brand = raw_brand[0]
 
         brand_str = str(raw_brand).strip() if raw_brand else ""
-        is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str) or brand_str.startswith("2008")
-
-        first_word_of_title = title.split()[0] if title else ""
-        is_title_word_copy = brand_str.lower() == first_word_of_title.lower()
-
-        if brand_str and brand_str.lower() not in ["none", "null", "sin marca"] and not is_code_brand and not is_title_word_copy:
+        if brand_str and brand_str.lower() not in ["none", "null", "sin marca"]:
             return brand_str
 
         for brand in KNOWN_BRANDS:
@@ -213,70 +208,20 @@ class FarmatodoScraper:
 
         return "Sin Marca"
 
-    def _extract_banner_negotiation(self, result_obj: dict) -> str:
+    def _extract_banner_negotiation(self, result_obj: dict, search_term: str) -> str:
+        """Extrae banners únicamente si corresponden a la búsqueda actual."""
         user_data_list = result_obj.get("userData") or []
         if isinstance(user_data_list, list):
             for data_item in user_data_list:
                 if isinstance(data_item, dict):
                     banner_title = data_item.get("banner") or data_item.get("title") or data_item.get("campaign")
                     if banner_title:
-                        return str(banner_title).strip()
+                        # Si el banner contiene relación con el término buscado, asignarlo
+                        term_words = set(search_term.lower().split())
+                        banner_words = set(str(banner_title).lower().split())
+                        if term_words.intersection(banner_words):
+                            return str(banner_title).strip()
         return ""
-
-    def _detect_discount_percentage(self, item: dict, title: str) -> Optional[float]:
-        for key in ["discountPercent", "discount_percent", "percentage", "discount"]:
-            val = item.get(key)
-            if val is not None:
-                try:
-                    pct = float(val)
-                    if 0 < pct < 100:
-                        return pct
-                except (ValueError, TypeError):
-                    pass
-
-        match_title = re.search(r'(\d{1,2})\s*%\s*(?:dcto|off|descuento)?', title, re.IGNORECASE)
-        if match_title:
-            try:
-                pct = float(match_title.group(1))
-                if 0 < pct < 100:
-                    return pct
-            except ValueError:
-                pass
-
-        promos = item.get("promotions") or item.get("badges") or item.get("tags") or []
-        match_promo = re.search(r'(\d{1,2})\s*%', str(promos))
-        if match_promo:
-            try:
-                pct = float(match_promo.group(1))
-                if 0 < pct < 100:
-                    return pct
-            except ValueError:
-                pass
-
-        return None
-
-    def _extract_prices(self, item: dict, title: str) -> tuple[float, Optional[float]]:
-        base_price = float(item.get("fullPrice") or item.get("price") or 0.0)
-        if base_price <= 0:
-            return 0.0, None
-
-        full_p = item.get("fullPrice")
-        curr_p = item.get("price")
-        if full_p and curr_p:
-            try:
-                f_val, c_val = float(full_p), float(curr_p)
-                if 0 < c_val < f_val:
-                    return f_val, c_val
-            except (ValueError, TypeError):
-                pass
-
-        pct = self._detect_discount_percentage(item, title)
-        discount_price = None
-
-        if pct is not None:
-            discount_price = round(base_price * (1.0 - (pct / 100.0)), 2)
-
-        return base_price, discount_price
 
     def _parse_products(self, raw_hits: list, search_term: str, global_banner: str = "") -> List[ExtractedProductData]:
         parsed_results = []
@@ -291,23 +236,31 @@ class FarmatodoScraper:
                 if not title:
                     continue
 
-                final_brand = self._extract_brand(item, title)
-                base_price, discount_price = self._extract_prices(item, title)
+                # Filtrado de relevancia de búsqueda para evitar productos fuera de contexto (ej. Agua)
+                first_keyword = search_term.lower().split()[0]
+                if len(first_keyword) > 3 and first_keyword not in title.lower():
+                    # Si el título no guarda ninguna relación semántica, saltar el hit engañoso de Algolia
+                    continue
 
-                is_out_of_store = bool(item.get("outofstore", False))
-                in_stock = not is_out_of_store
+                final_brand = self._extract_brand(item, title)
+                
+                base_price = float(item.get("fullPrice") or item.get("price") or 0.0)
+                curr_price = float(item.get("price") or 0.0)
+                
+                discount_price = curr_price if (0 < curr_price < base_price) else None
+
+                in_stock = not bool(item.get("outofstore", False))
 
                 ranking_info = item.get("_rankingInfo") or {}
                 is_ad = bool(
                     item.get("sponsored") or 
                     item.get("isSponsored") or 
-                    item.get("is_ad") or 
-                    item.get("isAd") or 
-                    item.get("ad") or
                     ranking_info.get("promoted", False)
                 )
 
-                banner_campaign = str(item.get("bannerCampaign") or item.get("campaign") or global_banner).strip()
+                # Asignación de campaña solo si es producto pautado o coincide con el banner
+                item_banner = str(item.get("bannerCampaign") or item.get("campaign") or "").strip()
+                banner_campaign = item_banner if item_banner else (global_banner if is_ad else "")
 
                 product = ExtractedProductData(
                     search_keyword=search_term,
@@ -331,7 +284,7 @@ class FarmatodoScraper:
 
 
 # ==============================================================================
-# EJECUCIÓN GENERAL
+# EJECUCIÓN PRINCIPAL
 # ==============================================================================
 async def run_vtex_scraping(conn) -> int:
     search_configs = []
