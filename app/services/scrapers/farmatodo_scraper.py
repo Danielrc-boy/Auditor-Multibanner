@@ -55,7 +55,7 @@ class FarmatodoScraper:
                 return []
 
     def _extract_brand(self, item: dict, title: str) -> str:
-        raw_brand = item.get("brandName") or item.get("marca") or item.get("brand_name")
+        raw_brand = item.get("brandName") or item.get("marca") or item.get("brand_name") or item.get("brand")
         
         if isinstance(raw_brand, dict):
             raw_brand = raw_brand.get("name") or raw_brand.get("label")
@@ -158,6 +158,10 @@ class FarmatodoScraper:
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
+                # Extracción de campos para Retail Media
+                is_ad = bool(item.get("sponsored", False) or item.get("isSponsored", False) or item.get("is_ad", False))
+                banner_campaign = str(item.get("bannerCampaign") or item.get("campaign") or "").strip()
+
                 product = ExtractedProductData(
                     search_keyword=search_term,
                     search_position=valid_position,
@@ -165,7 +169,9 @@ class FarmatodoScraper:
                     brand=final_brand,
                     base_price=base_price,
                     discount_price=discount_price,
-                    in_stock=in_stock
+                    in_stock=in_stock,
+                    is_ad=is_ad,
+                    banner_campaign=banner_campaign
                 )
                 parsed_results.append(product)
                 valid_position += 1
