@@ -194,16 +194,35 @@ def clean_database(confirm: bool = Query(False)):
         conn.close()
 
 
-# --- ENDPOINT ANALYTICS: TABLA DE POSICIONES Y REFERENCIAS ---
+# --- ENDPOINT PARA OBTENER OPCIONES DE FILTROS (MARCAS Y PRODUCTOS) ---
+@app.get("/analytics/options")
+def get_filter_options():
+    """Retorna las listas distintas de marcas y productos para los selectores frontend."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT COALESCE(brand, 'Sin Marca') as brand FROM scraper_results WHERE brand IS NOT NULL ORDER BY brand ASC;")
+            brands = [r["brand"] for r in cur.fetchall()]
+
+            cur.execute("SELECT DISTINCT product_name FROM scraper_results WHERE product_name IS NOT NULL ORDER BY product_name ASC;")
+            products = [r["product_name"] for r in cur.fetchall()]
+
+            return {"brands": brands, "products": products}
+    finally:
+        conn.close()
+
+
+# --- ENDPOINT ANALYTICS: TABLA DE POSICIONES DEDUPLICADA ---
 @app.get("/analytics/positions")
 def get_positions(
     retailer: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
+    product_name: Optional[str] = Query(None),
     search_term: Optional[str] = Query(None),
     query: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500)
 ):
-    """Obtiene el ranking de posición en góndola digital filtrado por referencia o marca."""
+    """Obtiene el ranking de posicionamiento deduplicado indicando número de permanencias."""
     conn = get_db_connection()
     try:
         where_clause = " WHERE 1=1"
@@ -214,6 +233,9 @@ def get_positions(
         if brand and brand != "ALL":
             where_clause += " AND brand ILIKE %s"
             params.append(f"%{brand}%")
+        if product_name and product_name != "ALL":
+            where_clause += " AND product_name ILIKE %s"
+            params.append(f"%{product_name}%")
         if search_term and search_term != "ALL":
             where_clause += " AND search_term ILIKE %s"
             params.append(f"%{search_term}%")
@@ -231,10 +253,13 @@ def get_positions(
                 price,
                 discount_price,
                 is_available,
-                (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as captured_at
+                COUNT(*) as run_count,
+                MIN(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as first_seen,
+                MAX(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as last_seen
             FROM scraper_results
             {where_clause}
-            ORDER BY position ASC, id DESC
+            GROUP BY retailer, search_term, product_name, brand, position, price, discount_price, is_available
+            ORDER BY last_seen DESC, position ASC
             LIMIT %s;
         """
         params.append(limit)
