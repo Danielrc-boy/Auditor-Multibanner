@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo Comercial - Dashboard Multibanner</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-6 font-sans">
+
+    <!-- Header -->
+    <header class="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
+        <div>
+            <h1 class="text-2xl font-bold text-white tracking-wide">Monitor Multibanner E-commerce</h1>
+            <p class="text-xs text-slate-400">Auditoría en tiempo real & Share of Shelf</p>
+        </div>
+        <div id="status-badge" class="px-3 py-1 text-xs rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            Conectado al servidor
+        </div>
+    </header>
+
+    <!-- Tarjetas de Métricas -->
+    <section class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-slate-800/60 border border-slate-700/50 p-4 rounded-xl">
+            <p class="text-xs text-slate-400 uppercase font-semibold">Productos Auditados</p>
+            <h3 id="m-total" class="text-3xl font-bold mt-1 text-white">--</h3>
+        </div>
+        <div class="bg-slate-800/60 border border-slate-700/50 p-4 rounded-xl">
+            <p class="text-xs text-slate-400 uppercase font-semibold">Disponibilidad (On-Shelf)</p>
+            <h3 id="m-avail" class="text-3xl font-bold mt-1 text-emerald-400">--%</h3>
+        </div>
+        <div class="bg-slate-800/60 border border-slate-700/50 p-4 rounded-xl">
+            <p class="text-xs text-slate-400 uppercase font-semibold">Alertas de Agotados</p>
+            <h3 id="m-stockout" class="text-3xl font-bold mt-1 text-rose-400">--</h3>
+        </div>
+        <div class="bg-slate-800/60 border border-slate-700/50 p-4 rounded-xl">
+            <p class="text-xs text-slate-400 uppercase font-semibold">Retailers Activos</p>
+            <h3 id="m-retailers" class="text-3xl font-bold mt-1 text-indigo-400">--</h3>
+        </div>
+    </section>
+
+    <!-- Gráficos -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Chart: Share of Shelf -->
+        <div class="bg-slate-800/60 border border-slate-700/50 p-5 rounded-xl">
+            <h2 class="text-sm font-semibold text-slate-300 mb-4">Share of Shelf por Retailer (Presencia de Marca)</h2>
+            <div class="relative h-64">
+                <canvas id="sosChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Chart: Evolución de Precios -->
+        <div class="bg-slate-800/60 border border-slate-700/50 p-5 rounded-xl">
+            <h2 class="text-sm font-semibold text-slate-300 mb-4">Evolución de Precio Promedio (7 Días)</h2>
+            <div class="relative h-64">
+                <canvas id="priceChart"></canvas>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        // BACKUP DATA: Datos en memoria por si el servidor backend se apaga durante el demo
+        const MOCK_DATA = {
+            summary: { total_monitored: 450, availability_rate: 94.2, out_of_stock_alerts: 26, active_retailers: 3 },
+            share_of_shelf: {
+                retailers: ["Exito", "Carulla", "Farmatodo"],
+                essity: [65, 42, 58],
+                competencia: [85, 58, 42]
+            },
+            price_evolution: {
+                labels: ["26 Aug", "27 Aug", "28 Aug", "29 Aug", "30 Aug", "31 Aug", "01 Sep"],
+                prices: [14200, 14200, 13900, 13900, 14100, 14100, 13850]
+            }
+        };
+
+        // Cambiar la URL por la IP/Dominio de producción en Railway
+        const API_ENDPOINT = "https://auditor-multibanner-production.up.railway.app/dashboard-data";
+
+        let localData = null;
+
+        async function initDashboard() {
+            try {
+                const response = await fetch(API_ENDPOINT);
+                if (!response.ok) throw new Error("Backend offline");
+                localData = await response.json();
+            } catch (err) {
+                console.warn("No se pudo conectar al API. Activando modo Demo Seguro con datos locales.");
+                localData = MOCK_DATA;
+                const badge = document.getElementById("status-badge");
+                badge.textContent = "Modo Offline (Demo Seguro)";
+                badge.className = "px-3 py-1 text-xs rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20";
+            }
+
+            renderMetrics(localData.summary);
+            renderSOSChart(localData.share_of_shelf);
+            renderPriceChart(localData.price_evolution);
+        }
+
+        function renderMetrics(s) {
+            document.getElementById("m-total").textContent = s.total_monitored;
+            document.getElementById("m-avail").textContent = s.availability_rate + "%";
+            document.getElementById("m-stockout").textContent = s.out_of_stock_alerts;
+            document.getElementById("m-retailers").textContent = s.active_retailers;
+        }
+
+        function renderSOSChart(sos) {
+            const ctx = document.getElementById("sosChart").getContext("2d");
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: sos.retailers,
+                    datasets: [
+                        { label: 'Essity', data: sos.essity, backgroundColor: '#3b82f6' },
+                        { label: 'Competencia', data: sos.competencia, backgroundColor: '#475569' }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#cbd5e1' } } },
+                    scales: {
+                        x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+                        y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+                    }
+                }
+            });
+        }
+
+        function renderPriceChart(p) {
+            const ctx = document.getElementById("priceChart").getContext("2d");
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: p.labels,
+                    datasets: [{
+                        label: 'Precio Promedio ($)',
+                        data: p.prices,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#cbd5e1' } } },
+                    scales: {
+                        x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+                        y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+                    }
+                }
+            });
+        }
+
+        // Cargar inmediatamente
+        window.addEventListener("DOMContentLoaded", initDashboard);
+    </script>
+</body>
+</html>

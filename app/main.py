@@ -1,12 +1,12 @@
 import os
 import io
-from uuid import UUID  # <-- IMPORTANTE: Resuelve el 'NameError: name UUID is not defined'
+from uuid import UUID
 from typing import Optional, List
 from datetime import datetime
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -167,6 +167,82 @@ class SearchConfigCreate(BaseModel):
 @app.get("/")
 def read_root():
     return {"message": "API Monitoreo Activa"}
+
+
+# --- ENDPOINT DE DATOS DEL DASHBOARD ---
+@app.get("/dashboard-data")
+@app.get("/dashboard-data/")
+def get_dashboard_data():
+    """Consolida datos históricos de scraper_results para gráficos comerciales."""
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            # 1. Share of Shelf por Retailer (Essity vs Competencia)
+            cur.execute("""
+                SELECT 
+                    retailer,
+                    COUNT(CASE WHEN LOWER(brand) IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') THEN 1 END) as essity_count,
+                    COUNT(CASE WHEN LOWER(brand) NOT IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') OR brand IS NULL THEN 1 END) as competition_count
+                FROM scraper_results
+                GROUP BY retailer;
+            """)
+            sos_rows = cur.fetchall()
+
+            # 2. Evolución de Precios (Promedio por día)
+            cur.execute("""
+                SELECT 
+                    TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD') as date_label,
+                    ROUND(AVG(price)::numeric, 2) as avg_price
+                FROM scraper_results
+                WHERE price > 0
+                GROUP BY TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD')
+                ORDER BY date_label ASC;
+            """)
+            price_rows = cur.fetchall()
+
+            # 3. Métricas Generales y Disponibilidad
+            cur.execute("""
+                SELECT 
+                    COUNT(*) as total_products,
+                    COUNT(CASE WHEN is_available = FALSE THEN 1 END) as out_of_stock_count,
+                    COUNT(DISTINCT retailer) as active_retailers
+                FROM scraper_results;
+            """)
+            summary_row = cur.fetchone()
+
+        total = summary_row["total_products"] if summary_row and summary_row["total_products"] else 0
+        stock_out = summary_row["out_of_stock_count"] if summary_row and summary_row["out_of_stock_count"] else 0
+        availability = round(((total - stock_out) / total) * 100, 1) if total > 0 else 100.0
+
+        return {
+            "summary": {
+                "total_monitored": total,
+                "availability_rate": availability,
+                "out_of_stock_alerts": stock_out,
+                "active_retailers": summary_row["active_retailers"] if summary_row else 0
+            },
+            "share_of_shelf": {
+                "retailers": [r["retailer"].capitalize() for r in sos_rows],
+                "essity": [r["essity_count"] for r in sos_rows],
+                "competencia": [r["competition_count"] for r in sos_rows]
+            },
+            "price_evolution": {
+                "labels": [p["date_label"] for p in price_rows],
+                "prices": [float(p["avg_price"]) for p in price_rows]
+            }
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/dashboard")
+def get_dashboard_page():
+    """Servir la página del dashboard directamente"""
+    if os.path.exists("app/dashboard.html"):
+        return FileResponse("app/dashboard.html")
+    if os.path.exists("dashboard.html"):
+        return FileResponse("dashboard.html")
+    raise HTTPException(status_code=404, detail="dashboard.html no encontrado.")
 
 
 @app.post("/admin/add-is-active-column")
