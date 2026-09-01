@@ -1,6 +1,5 @@
 import os
 import re
-import unicodedata
 import httpx
 from typing import List, Optional
 from app.services.scrapers.vtex_scraper import ExtractedProductData
@@ -28,33 +27,38 @@ class FarmatodoScraper:
 
     async def search_keyword(self, search_term: str, limit: int = 50) -> List[ExtractedProductData]:
         clean_term = search_term.strip()
+        
+        # Estructura del Payload Query nativa de Algolia Engine
         payload = {
             "requests": [
                 {
                     "indexName": FARMATODO_INDEX_NAME,
-                    "query": clean_term,
-                    "hitsPerPage": limit,
-                    "getRankingInfo": True
+                    "params": f"query={clean_term}&hitsPerPage={limit}&getRankingInfo=true"
                 }
             ]
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, http2=True) as client:
             try:
                 response = await client.post(self.endpoint, headers=self.headers, json=payload)
                 response.raise_for_status()
                 data = response.json()
                 
-                results = data.get("results", [])
-                if not results:
+                # BLINDAJE 1: Validar que la respuesta contenga 'results'
+                results = data.get("results")
+                if not results or not isinstance(results, list):
                     return []
                 
                 result_obj = results[0]
-                hits = result_obj.get("hits", [])
+                if not isinstance(result_obj, dict):
+                    return []
                 
-                # Extrae el banner promocional activo en la búsqueda (ej. Kotex) desde userData
+                # BLINDAJE 2: Corrección de raíz para 'NoneType' object is not iterable
+                hits = result_obj.get("hits")
+                if hits is None or not isinstance(hits, list):
+                    hits = []
+                
                 banner_campaign = self._extract_banner_negotiation(result_obj)
-                
                 return self._parse_products(hits, clean_term, banner_campaign)
 
             except Exception as e:
@@ -62,13 +66,13 @@ class FarmatodoScraper:
                 return []
 
     def _extract_banner_negotiation(self, result_obj: dict) -> str:
-        """Detecta si la consulta activó un banner publicitario mediante Algolia UserData."""
-        user_data_list = result_obj.get("userData", [])
-        for data_item in user_data_list:
-            if isinstance(data_item, dict):
-                banner_title = data_item.get("banner") or data_item.get("title") or data_item.get("campaign")
-                if banner_title:
-                    return str(banner_title).strip()
+        user_data_list = result_obj.get("userData") or []
+        if isinstance(user_data_list, list):
+            for data_item in user_data_list:
+                if isinstance(data_item, dict):
+                    banner_title = data_item.get("banner") or data_item.get("title") or data_item.get("campaign")
+                    if banner_title:
+                        return str(banner_title).strip()
         return ""
 
     def _extract_brand(self, item: dict, title: str) -> str:
@@ -82,8 +86,8 @@ class FarmatodoScraper:
         brand_str = str(raw_brand).strip() if raw_brand else ""
         is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str) or brand_str.startswith("2008")
 
-        first_word_of_title = title.split()[0] if title else ""
-        is_title_word_copy = brand_str.lower() == first_word_of_title.lower()
+        first_word = title.split()[0] if title else ""
+        is_title_word_copy = brand_str.lower() == first_word.lower()
 
         if brand_str and brand_str.lower() not in ["none", "null", "sin marca"] and not is_code_brand and not is_title_word_copy:
             return brand_str
@@ -95,7 +99,6 @@ class FarmatodoScraper:
         return "Sin Marca"
 
     def _detect_discount_percentage(self, item: dict, title: str) -> Optional[float]:
-        """Extrae el porcentaje dinámicamente mediante Regex desde textos y metadatos."""
         for key in ["discountPercent", "discount_percent", "percentage", "discount"]:
             val = item.get(key)
             if val is not None:
@@ -116,8 +119,7 @@ class FarmatodoScraper:
                 pass
 
         promos = item.get("promotions") or item.get("badges") or item.get("tags") or []
-        promos_text = str(promos)
-        match_promo = re.search(r'(\d{1,2})\s*%', promos_text)
+        match_promo = re.search(r'(\d{1,2})\s*%', str(promos))
         if match_promo:
             try:
                 pct = float(match_promo.group(1))
@@ -156,6 +158,8 @@ class FarmatodoScraper:
         valid_position = 1
 
         for item in raw_hits:
+            if not isinstance(item, dict):
+                continue
             try:
                 title = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
                 title = str(title).strip()
@@ -168,17 +172,16 @@ class FarmatodoScraper:
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
-                # Detección completa de Retail Media (+ Ad / Pauta / Regla Algolia)
+                # Detección Algolia Ranking & Retail Media
+                ranking_info = item.get("_rankingInfo") or {}
                 is_ad = bool(
-                    item.get("sponsored", False) or 
-                    item.get("isSponsored", False) or 
-                    item.get("is_ad", False) or
-                    item.get("isAd", False) or
-                    item.get("ad", False) or
-                    item.get("_rankingInfo", {}).get("promoted", False)
+                    item.get("sponsored") or 
+                    item.get("isSponsored") or 
+                    item.get("is_ad") or 
+                    item.get("isAd") or 
+                    ranking_info.get("promoted", False)
                 )
 
-                # Priorizar campaña del item o la global detectada en la búsqueda
                 banner_campaign = str(item.get("bannerCampaign") or item.get("campaign") or global_banner).strip()
 
                 product = ExtractedProductData(
