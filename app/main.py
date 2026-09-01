@@ -1,6 +1,7 @@
 import os
 import io
-from typing import Optional
+from uuid import UUID  # <-- IMPORTANTE: Resuelve el 'NameError: name UUID is not defined'
+from typing import Optional, List
 from datetime import datetime
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
@@ -31,6 +32,10 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 def get_db_connection():
+    if not DATABASE_URL:
+        raise HTTPException(
+            status_code=500, detail="Error BD: La variable DATABASE_URL no está configurada."
+        )
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
@@ -60,10 +65,19 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                 base_price = getattr(item, "base_price", 0.0)
                 disc_price = getattr(item, "discount_price", None)
                 stock = getattr(item, "in_stock", True)
-                cur.execute(insert_query, (
-                    formatted_retailer, term, title, str(brand).strip(), pos,
-                    base_price, disc_price, stock
-                ))
+                cur.execute(
+                    insert_query,
+                    (
+                        formatted_retailer,
+                        term,
+                        title,
+                        str(brand).strip(),
+                        pos,
+                        base_price,
+                        disc_price,
+                        stock,
+                    ),
+                )
                 saved_count += 1
             except Exception as e:
                 print(f"[DB ERROR] {formatted_retailer}: {e}", flush=True)
@@ -82,6 +96,7 @@ async def run_farmatodo_scraping(conn):
         return 0
     total_saved = 0
     from app.services.scrapers.farmatodo_scraper import FarmatodoScraper
+
     print("\n[SCRAPING] Iniciando extracción para: FARMATODO", flush=True)
     scraper = FarmatodoScraper()
     for term in search_configs:
@@ -108,6 +123,7 @@ async def run_rappi_scraping(conn):
         return 0
     total_saved = 0
     from app.services.scrapers.rappi_scraper import RappiScraper
+
     print("\n[SCRAPING] Iniciando extracción para: RAPPI", flush=True)
     scraper = RappiScraper()
     for term in search_configs:
@@ -128,6 +144,7 @@ async def run_all_scraping(conn):
     total_records = 0
     try:
         from app.services.scrapers.vtex_scraper import run_vtex_scraping
+
         total_records += await run_vtex_scraping(conn)
     except Exception as e:
         print(f"[MAIN ERROR] VTEX Scraper: {e}", flush=True)
@@ -157,9 +174,14 @@ def add_is_active_column():
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("ALTER TABLE search_configs ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;")
+        cursor.execute(
+            "ALTER TABLE search_configs ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"
+        )
         conn.commit()
-        return {"status": "success", "message": "Columna is_active agregada correctamente."}
+        return {
+            "status": "success",
+            "message": "Columna is_active agregada correctamente.",
+        }
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -197,13 +219,15 @@ def get_configs():
 def create_config(config: SearchConfigCreate):
     term = config.search_term or config.keyword
     if not term:
-        raise HTTPException(status_code=400, detail="Debe proporcionar 'search_term' o 'keyword'.")
+        raise HTTPException(
+            status_code=400, detail="Debe proporcionar 'search_term' o 'keyword'."
+        )
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
             "INSERT INTO search_configs (search_term, is_active) VALUES (%s, TRUE) RETURNING *;",
-            (term,)
+            (term,),
         )
         new_config = cursor.fetchone()
         conn.commit()
@@ -224,14 +248,16 @@ def toggle_config(config_id: int):
     try:
         cursor.execute(
             "UPDATE search_configs SET is_active = NOT is_active WHERE id = %s RETURNING id, search_term, is_active;",
-            (config_id,)
+            (config_id,),
         )
         updated = cursor.fetchone()
         conn.commit()
         cursor.close()
         conn.close()
         if not updated:
-            raise HTTPException(status_code=404, detail="Configuración no encontrada.")
+            raise HTTPException(
+                status_code=404, detail="Configuración no encontrada."
+            )
         return {"status": "success", "config": updated}
     except HTTPException:
         raise
@@ -239,7 +265,9 @@ def toggle_config(config_id: int):
         conn.rollback()
         cursor.close()
         conn.close()
-        raise HTTPException(status_code=400, detail=f"Error actualizando estado: {str(e)}")
+        raise HTTPException(
+            status_code=400, detail=f"Error actualizando estado: {str(e)}"
+        )
 
 
 @app.delete("/configs/{config_id}")
@@ -247,13 +275,17 @@ def delete_config(config_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("DELETE FROM search_configs WHERE id = %s RETURNING id;", (config_id,))
+        cursor.execute(
+            "DELETE FROM search_configs WHERE id = %s RETURNING id;", (config_id,)
+        )
         deleted = cursor.fetchone()
         conn.commit()
         cursor.close()
         conn.close()
         if not deleted:
-            raise HTTPException(status_code=404, detail="Configuración no encontrada.")
+            raise HTTPException(
+                status_code=404, detail="Configuración no encontrada."
+            )
         return {"status": "success", "deleted_id": config_id}
     except HTTPException:
         raise
@@ -261,7 +293,9 @@ def delete_config(config_id: int):
         conn.rollback()
         cursor.close()
         conn.close()
-        raise HTTPException(status_code=400, detail=f"Error eliminando: {str(e)}")
+        raise HTTPException(
+            status_code=400, detail=f"Error eliminando: {str(e)}"
+        )
 
 
 @app.get("/results")
@@ -315,7 +349,7 @@ async def trigger_now():
         return {
             "status": "success",
             "message": f"Monitoreo ejecutado correctamente. {total_records} productos guardados.",
-            "total_records": total_records
+            "total_records": total_records,
         }
     except Exception as e:
         print(f"[TRIGGER ERROR] {e}", flush=True)
@@ -363,7 +397,9 @@ def export_results(
     if not rows_tendencia:
         cursor.close()
         conn.close()
-        raise HTTPException(status_code=404, detail="No se encontraron datos para exportar.")
+        raise HTTPException(
+            status_code=404, detail="No se encontraron datos para exportar."
+        )
 
     query_resumen = """
         SELECT DISTINCT ON (retailer, search_term, product_name)
@@ -408,7 +444,7 @@ def export_results(
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers
+        headers=headers,
     )
 
 
