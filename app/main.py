@@ -169,67 +169,134 @@ def read_root():
     return {"message": "API Monitoreo Activa"}
 
 
-# --- ENDPOINT DE DATOS DEL DASHBOARD ---
+# --- ENDPOINT DE DATOS DEL DASHBOARD POTENCIADO Y FILTRABLE ---
 @app.get("/dashboard-data")
 @app.get("/dashboard-data/")
-def get_dashboard_data():
-    """Consolida datos históricos de scraper_results para gráficos comerciales."""
+def get_dashboard_data(
+    retailer: Optional[str] = Query(None),
+    search_term: Optional[str] = Query(None),
+    date_from: Optional[datetime] = Query(None),
+    date_to: Optional[datetime] = Query(None),
+):
+    """Consolida métricas y cruces comerciales avanzados con soporte para filtros dinámicos."""
     conn = get_db_connection()
     try:
+        base_where = " WHERE 1=1"
+        params = []
+
+        if retailer and retailer != "ALL":
+            base_where += " AND retailer ILIKE %s"
+            params.append(f"%{retailer}%")
+        if search_term and search_term != "ALL":
+            base_where += " AND search_term ILIKE %s"
+            params.append(f"%{search_term}%")
+        if date_from:
+            base_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date >= %s::date"
+            params.append(date_from)
+        if date_to:
+            base_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
+            params.append(date_to)
+
         with conn.cursor() as cur:
-            # 1. Share of Shelf por Retailer (Essity vs Competencia)
-            cur.execute("""
-                SELECT 
-                    retailer,
-                    COUNT(CASE WHEN LOWER(brand) IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') THEN 1 END) as essity_count,
-                    COUNT(CASE WHEN LOWER(brand) NOT IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') OR brand IS NULL THEN 1 END) as competition_count
-                FROM scraper_results
-                GROUP BY retailer;
-            """)
-            sos_rows = cur.fetchall()
+            # 1. Filtros disponibles para desplegables en Frontend
+            cur.execute("SELECT DISTINCT retailer FROM scraper_results WHERE retailer IS NOT NULL ORDER BY retailer;")
+            available_retailers = [r["retailer"].capitalize() for r in cur.fetchall()]
 
-            # 2. Evolución de Precios (Promedio por día)
-            cur.execute("""
-                SELECT 
-                    TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD') as date_label,
-                    ROUND(AVG(price)::numeric, 2) as avg_price
-                FROM scraper_results
-                WHERE price > 0
-                GROUP BY TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD')
-                ORDER BY date_label ASC;
-            """)
-            price_rows = cur.fetchall()
+            cur.execute("SELECT DISTINCT search_term FROM scraper_results WHERE search_term IS NOT NULL ORDER BY search_term;")
+            available_terms = [r["search_term"] for r in cur.fetchall()]
 
-            # 3. Métricas Generales y Disponibilidad
-            cur.execute("""
+            # 2. Resumen General y Métricas Clave
+            cur.execute(f"""
                 SELECT 
-                    COUNT(*) as total_products,
+                    COUNT(*) as total_monitored,
                     COUNT(CASE WHEN is_available = FALSE THEN 1 END) as out_of_stock_count,
-                    COUNT(DISTINCT retailer) as active_retailers
-                FROM scraper_results;
-            """)
+                    COUNT(DISTINCT retailer) as active_retailers,
+                    COUNT(CASE WHEN discount_price > 0 AND discount_price < price THEN 1 END) as discounted_count,
+                    ROUND(AVG(CASE WHEN discount_price > 0 AND discount_price < price THEN ((price - discount_price) / price) * 100 ELSE 0 END)::numeric, 1) as avg_discount_pct
+                FROM scraper_results
+                {base_where};
+            """, tuple(params))
             summary_row = cur.fetchone()
 
-        total = summary_row["total_products"] if summary_row and summary_row["total_products"] else 0
-        stock_out = summary_row["out_of_stock_count"] if summary_row and summary_row["out_of_stock_count"] else 0
-        availability = round(((total - stock_out) / total) * 100, 1) if total > 0 else 100.0
+            total = summary_row["total_monitored"] if summary_row and summary_row["total_monitored"] else 0
+            stock_out = summary_row["out_of_stock_count"] if summary_row and summary_row["out_of_stock_count"] else 0
+            availability = round(((total - stock_out) / total) * 100, 1) if total > 0 else 100.0
+
+            # 3. Share of Shelf Global & Top 10 (Visibilidad)
+            cur.execute(f"""
+                SELECT 
+                    retailer,
+                    COUNT(CASE WHEN LOWER(brand) IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') THEN 1 END) as essity_total,
+                    COUNT(CASE WHEN LOWER(brand) NOT IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') OR brand IS NULL THEN 1 END) as comp_total,
+                    COUNT(CASE WHEN LOWER(brand) IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') AND position <= 10 THEN 1 END) as essity_top10,
+                    COUNT(CASE WHEN (LOWER(brand) NOT IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') OR brand IS NULL) AND position <= 10 THEN 1 END) as comp_top10
+                FROM scraper_results
+                {base_where}
+                GROUP BY retailer;
+            """, tuple(params))
+            sos_rows = cur.fetchall()
+
+            # 4. Evolución de Precio Promedio por Marca (Essity vs Competencia)
+            cur.execute(f"""
+                SELECT 
+                    TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD') as date_label,
+                    ROUND(AVG(CASE WHEN LOWER(brand) IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') THEN price END)::numeric, 0) as essity_price,
+                    ROUND(AVG(CASE WHEN LOWER(brand) NOT IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') OR brand IS NULL THEN price END)::numeric, 0) as comp_price
+                FROM scraper_results
+                {base_where} AND price > 0
+                GROUP BY TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD')
+                ORDER BY date_label ASC;
+            """, tuple(params))
+            price_rows = cur.fetchall()
+
+            # 5. Top Marcas por Presencia (Desglose Comercial)
+            cur.execute(f"""
+                SELECT 
+                    COALESCE(brand, 'Sin Marca') as brand_name,
+                    COUNT(*) as total_skus,
+                    COUNT(CASE WHEN is_available = FALSE THEN 1 END) as oos_skus,
+                    ROUND(AVG(price)::numeric, 0) as avg_price
+                FROM scraper_results
+                {base_where}
+                GROUP BY COALESCE(brand, 'Sin Marca')
+                ORDER BY total_skus DESC
+                LIMIT 7;
+            """, tuple(params))
+            brand_rows = cur.fetchall()
 
         return {
+            "filters": {
+                "retailers": available_retailers,
+                "search_terms": available_terms
+            },
             "summary": {
                 "total_monitored": total,
                 "availability_rate": availability,
                 "out_of_stock_alerts": stock_out,
-                "active_retailers": summary_row["active_retailers"] if summary_row else 0
+                "active_retailers": summary_row["active_retailers"] if summary_row else 0,
+                "discounted_count": summary_row["discounted_count"] if summary_row else 0,
+                "avg_discount_pct": float(summary_row["avg_discount_pct"]) if summary_row and summary_row["avg_discount_pct"] else 0.0
             },
             "share_of_shelf": {
                 "retailers": [r["retailer"].capitalize() for r in sos_rows],
-                "essity": [r["essity_count"] for r in sos_rows],
-                "competencia": [r["competition_count"] for r in sos_rows]
+                "essity": [r["essity_total"] for r in sos_rows],
+                "competencia": [r["comp_total"] for r in sos_rows],
+                "essity_top10": [r["essity_top10"] for r in sos_rows],
+                "competencia_top10": [r["comp_top10"] for r in sos_rows]
             },
             "price_evolution": {
                 "labels": [p["date_label"] for p in price_rows],
-                "prices": [float(p["avg_price"]) for p in price_rows]
-            }
+                "essity_prices": [float(p["essity_price"]) if p["essity_price"] else 0 for p in price_rows],
+                "comp_prices": [float(p["comp_price"]) if p["comp_price"] else 0 for p in price_rows]
+            },
+            "brand_breakdown": [
+                {
+                    "brand": b["brand_name"],
+                    "skus": b["total_skus"],
+                    "oos": b["oos_skus"],
+                    "avg_price": float(b["avg_price"]) if b["avg_price"] else 0
+                } for b in brand_rows
+            ]
         }
     finally:
         conn.close()
