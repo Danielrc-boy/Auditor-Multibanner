@@ -19,22 +19,24 @@ class VTEXScraper:
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        # VTEX maneja rangos desde 0 hasta (limit - 1) para obtener la cantidad exacta
+        # Usar el endpoint moderno de VTEX Intelligent Search
+        endpoint = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{keyword}"
+        
+        # Parámetros que replican la búsqueda exacta del sitio web
         vtex_params = {
-            "_from": 0,
-            "_to": limit - 1
+            "page": 1,
+            "count": limit,
+            "sort": "",  # Ordenamiento por defecto de la tienda (Relevancia)
+            "locale": "es-CO"
         }
 
         if SCRAPERAPI_KEY:
-            # Si usas ScraperAPI, codificamos los parámetros en la URL de destino
             query_string = "&".join([f"{k}={v}" for k, v in vtex_params.items()])
-            target_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}?{query_string}"
-            
+            target_url = f"{endpoint}?{query_string}"
             request_url = "http://api.scraperapi.com/"
             params = {"api_key": SCRAPERAPI_KEY, "url": target_url}
         else:
-            target_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}"
-            request_url = target_url
+            request_url = endpoint
             params = vtex_params
 
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
@@ -43,10 +45,20 @@ class VTEXScraper:
                 if response.status_code not in (200, 206):
                     print(f"[ERROR {self.retailer.upper()}] Status {response.status_code}", flush=True)
                     return []
-                raw_products = response.json()
+                
+                data = response.json()
+                
+                # Intelligent Search retorna los productos en la propiedad 'products'
+                if isinstance(data, dict):
+                    raw_products = data.get("products", [])
+                elif isinstance(data, list):
+                    raw_products = data
+                else:
+                    raw_products = []
+
                 return self._parse_products(raw_products, keyword, limit)
             except Exception as e:
-                print(f"[ERROR {self.retailer.upper()}] Error al scrapeare '{keyword}': {e}", flush=True)
+                print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{keyword}': {e}", flush=True)
                 return []
 
     def _parse_products(self, raw_products: list, search_term: str, limit: int) -> List[ExtractedProductData]:
@@ -59,19 +71,32 @@ class VTEXScraper:
                 item = items[0]
                 sellers = item.get("sellers", [{}])
                 comm = sellers[0].get("commertialOffer", {}) if sellers else {}
+                
                 base_price = float(comm.get("ListPrice", 0.0) or 0.0)
                 price = float(comm.get("Price", 0.0) or 0.0)
+                
+                # Si commertialOffer no trae precio, buscamos en la raíz del producto (Intelligent Search)
+                if base_price == 0 and price == 0:
+                    price = float(prod.get("price", 0.0) or prod.get("spotPrice", 0.0) or 0.0)
+                    base_price = float(prod.get("listPrice", 0.0) or price)
+
                 discount_price = None
                 if 0 < price < base_price:
                     discount_price = price
                 elif base_price == 0 and price > 0:
                     base_price = price
-                in_stock = comm.get("AvailableQuantity", 0) > 0
+
+                in_stock = comm.get("AvailableQuantity", 0) > 0 or prod.get("isAvailable", True)
+
+                # Extraer título y marca con soporte fallback
+                title = prod.get("productName") or prod.get("name") or "Sin título"
+                brand = prod.get("brand") or prod.get("brandName") or "Sin Marca"
+
                 parsed.append(ExtractedProductData(
                     search_keyword=search_term,
                     search_position=idx,
-                    title=prod.get("productName", "Sin título"),
-                    brand=prod.get("brand", "Sin Marca"),
+                    title=title,
+                    brand=brand,
                     base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock
