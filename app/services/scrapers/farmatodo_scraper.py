@@ -33,32 +33,29 @@ class FarmatodoScraper:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
 
-    async def search_keyword(self, search_term: str, limit: int = 50) -> list:
-        clean_term = search_term.strip()
+    async def search_keyword(self, keyword: str, limit: int = 50):
+        all_products = []
+        page = 1
+        clean_term = normalize_text(keyword)
         
-        payload = {
-            "requests": [
-                {
-                    "indexName": FARMATODO_INDEX_NAME,
-                    "query": clean_term,
-                    "hitsPerPage": limit
-                }
-            ]
-        }
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
             try:
-                response = await client.post(self.endpoint, headers=self.headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-                
-                results = data.get("results", [])
-                if not results:
-                    return []
-                
-                hits = results[0].get("hits", [])
-                return self._parse_products(hits, clean_term)
-
+                while len(all_products) < limit:
+                    url = f"https://www.farmatodo.com.co/api/search?term={clean_term}&page={page}"
+                    response = await client.get(url, headers=self.headers)
+                    if response.status_code != 200:
+                        break
+                    
+                    data = response.json()
+                    products = data.get("products", [])
+                    if not products:
+                        break
+                        
+                    all_products.extend(products)
+                    page += 1
+                    
+                parsed_results = self._parse_products(all_products[:limit], keyword)
+                return parsed_results
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{clean_term}': {e}", flush=True)
                 return []
@@ -92,7 +89,6 @@ class FarmatodoScraper:
             return None
         try:
             if isinstance(val, str):
-                # Eliminar símbolos de moneda o espacios si los hay
                 val = re.sub(r'[^\d.]', '', val.replace(',', '.'))
             res = float(val)
             return res if res > 0 else None
@@ -101,14 +97,11 @@ class FarmatodoScraper:
 
     def _extract_prices(self, item: dict) -> tuple[float, float | None]:
         """Extrae el precio base y el precio de descuento escaneando múltiples estructuras posibles."""
-        
-        # 1. Obtener objeto o valor principal de precio
         raw_price_obj = item.get("price")
         
         base_price = 0.0
         offer_price = None
 
-        # Si 'price' viene como diccionario (Estructura anidada en algunas versiones de Algolia)
         if isinstance(raw_price_obj, dict):
             base_price = self._safe_float(raw_price_obj.get("base") or raw_price_obj.get("full") or raw_price_obj.get("regular")) or 0.0
             offer_price = self._safe_float(raw_price_obj.get("offer") or raw_price_obj.get("discount") or raw_price_obj.get("special"))
@@ -116,7 +109,6 @@ class FarmatodoScraper:
             base_price = self._safe_float(item.get("fullPrice") or item.get("price") or item.get("originalPrice") or item.get("regularPrice")) or 0.0
             offer_price = self._safe_float(item.get("offerPrice") or item.get("priceWithDiscount") or item.get("discountPrice") or item.get("finalPrice") or item.get("specialPrice"))
 
-        # 2. Revisar arreglos de promociones/descuentos si no se halló oferta directa
         if not offer_price:
             promos = item.get("promotions") or item.get("discounts") or item.get("offers")
             if isinstance(promos, list) and len(promos) > 0:
@@ -124,26 +116,22 @@ class FarmatodoScraper:
                 if isinstance(first_promo, dict):
                     offer_price = self._safe_float(first_promo.get("price") or first_promo.get("offerPrice") or first_promo.get("specialPrice"))
                     
-                    # Si no viene precio en el objeto promo pero sí porcentaje
                     if not offer_price and base_price > 0:
                         pct = self._safe_float(first_promo.get("percent") or first_promo.get("percentage") or first_promo.get("value"))
                         if pct:
                             pct_val = pct / 100.0 if pct > 1 else pct
                             offer_price = round(base_price * (1.0 - pct_val), 2)
 
-        # 3. Revisar porcentaje directo en la raíz del producto
         if not offer_price and base_price > 0:
             pct = self._safe_float(item.get("discountPercent") or item.get("discount_percent") or item.get("percentage") or item.get("discount"))
             if pct:
                 pct_val = pct / 100.0 if pct > 1 else pct
                 offer_price = round(base_price * (1.0 - pct_val), 2)
 
-        # 4. Validaciones finales
         discount_price = None
         if offer_price and 0 < offer_price < base_price:
             discount_price = offer_price
         elif offer_price and offer_price > base_price:
-            # Caso donde los precios vienen invertidos en la API
             discount_price = base_price
             base_price = offer_price
 
