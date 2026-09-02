@@ -19,25 +19,17 @@ class VTEXScraper:
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        # Usar el endpoint moderno de VTEX Intelligent Search
-        endpoint = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{keyword}"
-        
-        # Parámetros que replican la búsqueda exacta del sitio web
-        vtex_params = {
-            "page": 1,
-            "count": limit,
-            "sort": "",  # Ordenamiento por defecto de la tienda (Relevancia)
-            "locale": "es-CO"
-        }
+        # O=OrderByScoreDESC fuerza el orden por Relevancia del anaquel digital
+        # _from=0&_to=(limit-1) garantiza traer las 50 referencias
+        query_params = f"_from=0&_to={limit-1}&O=OrderByScoreDESC"
+        target_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}?{query_params}"
 
         if SCRAPERAPI_KEY:
-            query_string = "&".join([f"{k}={v}" for k, v in vtex_params.items()])
-            target_url = f"{endpoint}?{query_string}"
             request_url = "http://api.scraperapi.com/"
             params = {"api_key": SCRAPERAPI_KEY, "url": target_url}
         else:
-            request_url = endpoint
-            params = vtex_params
+            request_url = target_url
+            params = None
 
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
             try:
@@ -45,17 +37,7 @@ class VTEXScraper:
                 if response.status_code not in (200, 206):
                     print(f"[ERROR {self.retailer.upper()}] Status {response.status_code}", flush=True)
                     return []
-                
-                data = response.json()
-                
-                # Intelligent Search retorna los productos en la propiedad 'products'
-                if isinstance(data, dict):
-                    raw_products = data.get("products", [])
-                elif isinstance(data, list):
-                    raw_products = data
-                else:
-                    raw_products = []
-
+                raw_products = response.json()
                 return self._parse_products(raw_products, keyword, limit)
             except Exception as e:
                 print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{keyword}': {e}", flush=True)
@@ -71,32 +53,19 @@ class VTEXScraper:
                 item = items[0]
                 sellers = item.get("sellers", [{}])
                 comm = sellers[0].get("commertialOffer", {}) if sellers else {}
-                
                 base_price = float(comm.get("ListPrice", 0.0) or 0.0)
                 price = float(comm.get("Price", 0.0) or 0.0)
-                
-                # Si commertialOffer no trae precio, buscamos en la raíz del producto (Intelligent Search)
-                if base_price == 0 and price == 0:
-                    price = float(prod.get("price", 0.0) or prod.get("spotPrice", 0.0) or 0.0)
-                    base_price = float(prod.get("listPrice", 0.0) or price)
-
                 discount_price = None
                 if 0 < price < base_price:
                     discount_price = price
                 elif base_price == 0 and price > 0:
                     base_price = price
-
-                in_stock = comm.get("AvailableQuantity", 0) > 0 or prod.get("isAvailable", True)
-
-                # Extraer título y marca con soporte fallback
-                title = prod.get("productName") or prod.get("name") or "Sin título"
-                brand = prod.get("brand") or prod.get("brandName") or "Sin Marca"
-
+                in_stock = comm.get("AvailableQuantity", 0) > 0
                 parsed.append(ExtractedProductData(
                     search_keyword=search_term,
                     search_position=idx,
-                    title=title,
-                    brand=brand,
+                    title=prod.get("productName", "Sin título"),
+                    brand=prod.get("brand", "Sin Marca"),
                     base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock
