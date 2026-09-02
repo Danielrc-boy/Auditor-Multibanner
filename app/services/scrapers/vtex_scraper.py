@@ -13,15 +13,20 @@ class VTEXScraper:
             self.base_url = "https://www.carulla.com"
         else:
             self.base_url = "https://www.exito.com"
+        
+        # Headers actualizados para superar bloqueos en VTEX Intelligent Search
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "Accept-Language": "es-CO,es;q=0.9",
+            "x-vtex-use-svg-mfe": "true"
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        # 1. Primer intento: API Intelligent Search (Reflejo exacto del Frontend moderno)
-        is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{keyword}"
+        # 1. Primer intento: API Intelligent Search con query params estándar
+        is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search"
         is_params = {
+            "query": keyword,
             "page": 1,
             "count": limit,
             "sort": "",
@@ -41,7 +46,7 @@ class VTEXScraper:
             except Exception as e:
                 print(f"[WARN {self.retailer.upper()}] Intelligent Search no disponible, aplicando fallback legacy: {e}", flush=True)
 
-            # 2. Fallback: API Legacy optimizada con politica comercial (sc=1) y relevancia
+            # 2. Fallback: API Legacy optimizada con política comercial (sc=1) y orden por relevancia
             legacy_params = f"_from=0&_to={limit-1}&O=OrderByScoreDESC&sc=1"
             legacy_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}?{legacy_params}"
             req_legacy_url, req_legacy_params = self._build_request(legacy_url, None)
