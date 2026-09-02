@@ -46,15 +46,18 @@ def get_db_connection():
 def save_scraper_results(conn, results: list, retailer: str) -> int:
     if not results:
         return 0
+    
+    # Inclusión de seller_name en el INSERT
     insert_query = """
         INSERT INTO scraper_results (
             retailer, search_term, product_name, brand, position,
-            price, discount_price, is_available
+            price, discount_price, is_available, seller_name
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
     """
     saved_count = 0
     formatted_retailer = retailer.capitalize() if retailer else "Unknown"
+    
     with conn.cursor() as cur:
         for item in results:
             try:
@@ -65,6 +68,10 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                 base_price = getattr(item, "base_price", 0.0)
                 disc_price = getattr(item, "discount_price", None)
                 stock = getattr(item, "in_stock", True)
+                
+                # Obtener seller_name o usar el nombre del Retailer por defecto
+                seller_name = getattr(item, "seller_name", None) or getattr(item, "seller", None) or formatted_retailer
+                
                 cur.execute(
                     insert_query,
                     (
@@ -76,6 +83,7 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                         base_price,
                         disc_price,
                         stock,
+                        seller_name,
                     ),
                 )
                 saved_count += 1
@@ -253,12 +261,13 @@ def get_positions(
                 price,
                 discount_price,
                 is_available,
+                COALESCE(seller_name, retailer) as seller_name,
                 COUNT(*) as run_count,
                 MIN(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as first_seen,
                 MAX(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as last_seen
             FROM scraper_results
             {where_clause}
-            GROUP BY retailer, search_term, product_name, brand, position, price, discount_price, is_available
+            GROUP BY retailer, search_term, product_name, brand, position, price, discount_price, is_available, seller_name
             ORDER BY last_seen DESC, position ASC
             LIMIT %s;
         """
@@ -620,6 +629,7 @@ def get_results(
             id, retailer, search_term, product_name, 
             COALESCE(brand, 'Sin Marca') AS brand, 
             position, price, discount_price, is_available,
+            COALESCE(seller_name, retailer) AS seller_name,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results 
         WHERE 1=1
@@ -680,6 +690,7 @@ def export_results(
             id, retailer, search_term, product_name, 
             COALESCE(brand, 'Sin Marca') AS brand, 
             position, price, discount_price, is_available,
+            COALESCE(seller_name, retailer) AS seller_name,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results WHERE 1=1
     """
@@ -712,6 +723,7 @@ def export_results(
             id, retailer, search_term, product_name, 
             COALESCE(brand, 'Sin Marca') AS brand, 
             position, price, discount_price, is_available,
+            COALESCE(seller_name, retailer) AS seller_name,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results
         WHERE 1=1
