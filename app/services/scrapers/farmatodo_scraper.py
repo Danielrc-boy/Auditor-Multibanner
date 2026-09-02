@@ -1,6 +1,5 @@
 import os
 import re
-import urllib.parse
 import unicodedata
 import httpx
 from app.services.scrapers.vtex_scraper import ExtractedProductData
@@ -34,28 +33,33 @@ class FarmatodoScraper:
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50):
-        all_products = []
-        page = 1
         clean_term = normalize_text(keyword)
         
+        # Estructura del Payload para consultar directamente a Algolia
+        payload = {
+            "requests": [
+                {
+                    "indexName": FARMATODO_INDEX_NAME.strip(),
+                    "params": f"query={clean_term}&hitsPerPage={limit}&page=0"
+                }
+            ]
+        }
+
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
             try:
-                while len(all_products) < limit:
-                    url = f"https://www.farmatodo.com.co/api/search?term={clean_term}&page={page}"
-                    response = await client.get(url, headers=self.headers)
-                    if response.status_code != 200:
-                        break
-                    
-                    data = response.json()
-                    products = data.get("products", [])
-                    if not products:
-                        break
-                        
-                    all_products.extend(products)
-                    page += 1
-                    
-                parsed_results = self._parse_products(all_products[:limit], keyword)
-                return parsed_results
+                response = await client.post(self.endpoint, headers=self.headers, json=payload)
+                if response.status_code != 200:
+                    print(f"[ERROR FARMATODO] Status {response.status_code} al consultar Algolia", flush=True)
+                    return []
+                
+                data = response.json()
+                results = data.get("results", [])
+                if not results:
+                    return []
+
+                raw_hits = results[0].get("hits", [])
+                return self._parse_products(raw_hits[:limit], keyword)
+
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{clean_term}': {e}", flush=True)
                 return []
@@ -84,7 +88,6 @@ class FarmatodoScraper:
         return "Sin Marca"
 
     def _safe_float(self, val) -> float | None:
-        """Convierte de forma segura strings, enteros o floats a float puro."""
         if val is None or val == "":
             return None
         try:
@@ -96,7 +99,6 @@ class FarmatodoScraper:
             return None
 
     def _extract_prices(self, item: dict) -> tuple[float, float | None]:
-        """Extrae el precio base y el precio de descuento escaneando múltiples estructuras posibles."""
         raw_price_obj = item.get("price")
         
         base_price = 0.0
