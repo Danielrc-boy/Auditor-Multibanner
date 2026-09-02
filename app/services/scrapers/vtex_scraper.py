@@ -136,7 +136,7 @@ class VTEXScraper:
                     title=prod.get("productName") or prod.get("name") or "Sin título",
                     brand=prod.get("brand") or prod.get("brandName") or "Sin Marca",
                     base_price=base_price,
-                    discount_price=discount_pri,
+                    discount_price=discount_price,
                     in_stock=in_stock
                 ))
             except Exception as e:
