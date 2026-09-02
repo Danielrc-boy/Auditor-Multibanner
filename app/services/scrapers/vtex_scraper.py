@@ -1,7 +1,6 @@
 import os
 import httpx
 from typing import List
-from uuid import UUID, uuid4
 from app.schemas import ExtractedProductData
 
 SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
@@ -11,26 +10,30 @@ class VTEXScraper:
         self.retailer = retailer.lower()
         if self.retailer == "carulla":
             self.base_url = "https://www.carulla.com"
+            # Carulla usa Sales Channel 3 (o 1 en fallback) con simulador regional
+            self.sc = "3"
         else:
             self.base_url = "https://www.exito.com"
-        
-        # Headers actualizados para superar bloqueos en VTEX Intelligent Search
+            self.sc = "1"
+
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "application/json",
             "Accept-Language": "es-CO,es;q=0.9",
-            "x-vtex-use-svg-mfe": "true"
+            "Content-Type": "application/json"
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        # 1. Primer intento: API Intelligent Search con query params estándar
+        # Método 1: Intelligent Search vía API REST parametrizada con SalesChannel exacto
         is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search"
         is_params = {
             "query": keyword,
             "page": 1,
             "count": limit,
-            "sort": "",
-            "locale": "es-CO"
+            "sort": "score:desc",  # Orden exacto por Relevancia en VTEX IS
+            "sc": self.sc,
+            "locale": "es-CO",
+            "simulationBehavior": "default"
         }
 
         request_url, params = self._build_request(is_url, is_params)
@@ -44,21 +47,21 @@ class VTEXScraper:
                     if products_raw:
                         return self._parse_intelligent_search(products_raw, keyword, limit)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] Intelligent Search no disponible, aplicando fallback legacy: {e}", flush=True)
+                print(f"[WARN {self.retailer.upper()}] Intelligent Search REST falló: {e}", flush=True)
 
-            # 2. Fallback: API Legacy optimizada con política comercial (sc=1) y orden por relevancia
-            legacy_params = f"_from=0&_to={limit-1}&O=OrderByScoreDESC&sc=1"
-            legacy_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}?{legacy_params}"
+            # Método 2: Fallback Legacy parametrizado estrictamente con orden de relevancia y SC
+            legacy_params = f"_from=0&_to={limit-1}&O=OrderByScoreDESC&sc={self.sc}"
+            legacy_url = f"{self.base_url}/api/catalog_system/pub/products/search/{keyword}?{legacy_params}"
             req_legacy_url, req_legacy_params = self._build_request(legacy_url, None)
 
             try:
                 response = await client.get(req_legacy_url, headers=self.headers, params=req_legacy_params)
                 if response.status_code in (200, 206):
                     raw_products = response.json()
-                    if isinstance(raw_products, list):
+                    if isinstance(raw_products, list) and raw_products:
                         return self._parse_legacy_products(raw_products, keyword, limit)
             except Exception as e:
-                print(f"[ERROR {self.retailer.upper()}] Error en Fallback Legacy '{keyword}': {e}", flush=True)
+                print(f"[ERROR {self.retailer.upper()}] Fallback Legacy falló para '{keyword}': {e}", flush=True)
 
         return []
 
@@ -134,7 +137,7 @@ class VTEXScraper:
 
 
 async def run_vtex_scraping(conn) -> int:
-    """Función de orquestación consumida directamente por app/main.py"""
+    """Orquestador principal"""
     search_configs = []
     with conn.cursor() as cur:
         cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
