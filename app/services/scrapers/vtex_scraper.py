@@ -107,10 +107,19 @@ class VTEXScraper:
                 list_price = float(offer.get("listPrice", 0.0) or price)
                 discount_price = price if (0 < price < list_price) else None
 
-                # Extraer el vendedor / seller real (Tercero vs Propio)
-                seller_info = offer.get("seller", {})
-                seller_name = seller_info.get("sellerName") if isinstance(seller_info, dict) else None
+                # Extraer sellerName priorizando items -> sellers para Marketplace
+                items = node.get("items", [])
+                item_sellers = items[0].get("sellers", []) if items else []
+                seller_name = None
+                
+                if item_sellers:
+                    seller_name = item_sellers[0].get("sellerName") or item_sellers[0].get("name")
+                
                 if not seller_name:
+                    seller_info = offer.get("seller", {})
+                    seller_name = seller_info.get("sellerName") if isinstance(seller_info, dict) else None
+
+                if not seller_name or str(seller_name).strip() == "":
                     seller_name = self.default_seller
 
                 parsed.append(ExtractedProductData(
@@ -143,7 +152,7 @@ class VTEXScraper:
                 in_stock = prod.get("isAvailable", True) if "isAvailable" in prod else (comm.get("AvailableQuantity", 0) > 0)
 
                 seller_name = seller_obj.get("sellerName") if isinstance(seller_obj, dict) else None
-                if not seller_name:
+                if not seller_name or str(seller_name).strip() == "":
                     seller_name = self.default_seller
 
                 parsed.append(ExtractedProductData(
