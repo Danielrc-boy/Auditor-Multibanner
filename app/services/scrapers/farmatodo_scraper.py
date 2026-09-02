@@ -35,12 +35,13 @@ class FarmatodoScraper:
     async def search_keyword(self, keyword: str, limit: int = 50):
         clean_term = normalize_text(keyword)
         
-        # Estructura del Payload para consultar directamente a Algolia
+        # Estructura corregida: pasamos 'query' explícitamente a Algolia
         payload = {
             "requests": [
                 {
                     "indexName": FARMATODO_INDEX_NAME.strip(),
-                    "params": f"query={clean_term}&hitsPerPage={limit}&page=0"
+                    "query": clean_term,
+                    "params": f"hitsPerPage={limit}&page=0"
                 }
             ]
         }
