@@ -270,51 +270,63 @@ def get_positions(
         conn.close()
 
 
-# --- ENDPOINT ANALYTICS: COMPARADOR HEAD-TO-HEAD DE MARCAS ---
-@app.get("/analytics/compare")
-def compare_brands(
-    brand_a: str = Query(..., description="Primera marca a comparar (ej. Nosotras)"),
-    brand_b: str = Query(..., description="Segunda marca a comparar (ej. Kotex)"),
-    retailer: Optional[str] = Query(None),
-    search_term: Optional[str] = Query(None)
+# --- ENDPOINT ANALYTICS: COMPARADOR HEAD-TO-HEAD DE PRODUCTOS / REFERENCIAS ---
+@app.get("/analytics/compare-products")
+def compare_products(
+    product_a: str = Query(..., description="Nombre exacto de la referencia A (Base)"),
+    product_b: str = Query(..., description="Nombre exacto de la referencia B (Comparación)"),
+    retailer: Optional[str] = Query(None)
 ):
-    """Compara métricas clave (Precios, Promociones, Visibilidad y Stock) entre dos marcas."""
+    """Compara métricas y calcula diferenciales entre dos referencias de productos específicas."""
     conn = get_db_connection()
     try:
-        where_clause = " WHERE brand ILIKE %s"
-        params_a = [f"%{brand_a}%"]
-        params_b = [f"%{brand_b}%"]
+        where_clause = " WHERE product_name ILIKE %s"
+        params_a = [f"%{product_a}%"]
+        params_b = [f"%{product_b}%"]
 
         if retailer and retailer != "ALL":
             where_clause += " AND retailer ILIKE %s"
             params_a.append(f"%{retailer}%")
             params_b.append(f"%{retailer}%")
-        if search_term and search_term != "ALL":
-            where_clause += " AND search_term ILIKE %s"
-            params_a.append(f"%{search_term}%")
-            params_b.append(f"%{search_term}%")
 
         query_sql = f"""
             SELECT 
+                product_name,
+                COALESCE(brand, 'Sin Marca') as brand,
                 COUNT(*) as total_skus,
                 ROUND(AVG(position)::numeric, 1) as avg_position,
-                COUNT(CASE WHEN position <= 10 THEN 1 END) as top10_count,
                 ROUND(AVG(price)::numeric, 0) as avg_price,
                 ROUND(AVG(CASE WHEN discount_price > 0 AND discount_price < price THEN discount_price ELSE price END)::numeric, 0) as avg_final_price,
-                COUNT(CASE WHEN discount_price > 0 AND discount_price < price THEN 1 END) as promo_skus,
                 COUNT(CASE WHEN is_available = FALSE THEN 1 END) as oos_skus
             FROM scraper_results
-            {where_clause};
+            {where_clause}
+            GROUP BY product_name, COALESCE(brand, 'Sin Marca');
         """
         with conn.cursor() as cur:
             cur.execute(query_sql, tuple(params_a))
-            res_a = cur.fetchone()
+            res_a = cur.fetchone() or {}
             cur.execute(query_sql, tuple(params_b))
-            res_b = cur.fetchone()
+            res_b = cur.fetchone() or {}
+
+        price_a = float(res_a.get("avg_final_price") or 0)
+        price_b = float(res_b.get("avg_final_price") or 0)
+        price_diff = price_b - price_a
+        price_pct = ((price_b - price_a) / price_a * 100) if price_a > 0 else 0
+
+        pos_a = float(res_a.get("avg_position") or 0)
+        pos_b = float(res_b.get("avg_position") or 0)
+        pos_diff = pos_b - pos_a
 
         return {
-            "brand_a": {"name": brand_a, "metrics": res_a},
-            "brand_b": {"name": brand_b, "metrics": res_b}
+            "product_a": res_a,
+            "product_b": res_b,
+            "differentials": {
+                "price_diff": price_diff,
+                "price_pct": round(price_pct, 1),
+                "is_b_cheaper": price_diff < 0,
+                "pos_diff": round(pos_diff, 1),
+                "is_b_better_positioned": pos_diff < 0
+            }
         }
     finally:
         conn.close()

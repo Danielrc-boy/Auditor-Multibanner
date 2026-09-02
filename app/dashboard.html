@@ -74,35 +74,39 @@
             </div>
         </div>
 
-        <!-- M&Oacute;DULO COMPARADOR HEAD-TO-HEAD -->
+        <!-- MÓDULO COMPARADOR HEAD-TO-HEAD POR REFERENCIAS -->
         <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-6">
             <div class="flex justify-between items-center border-b border-slate-700/50 pb-4">
                 <div>
                     <h2 class="text-base font-bold text-white flex items-center gap-2">
-                        <i class="fa-solid fa-code-compare text-indigo-400"></i> Comparador Directo (Head-to-Head)
+                        <i class="fa-solid fa-code-compare text-indigo-400"></i> Comparador Head-to-Head por Referencias
                     </h2>
-                    <p class="text-xs text-slate-400">Analiza métricas cruzadas entre marcas en tiempo real</p>
+                    <p class="text-xs text-slate-400">Compara la referencia de la derecha evaluando sus brechas con respecto al producto base de la izquierda</p>
                 </div>
-                <button onclick="runComparison()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-500">
-                    Comparar Marcas
+                <button onclick="runProductComparison()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-500 shadow-md">
+                    Comparar Referencias
                 </button>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="space-y-2">
-                    <label class="text-xs text-indigo-400 font-bold uppercase">Marca A (Objetivo)</label>
-                    <input type="text" id="brandA" value="Nosotras" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200">
+                    <label class="text-xs text-indigo-400 font-bold uppercase">Referencia A (Base)</label>
+                    <select id="compareProdA" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:ring-indigo-500">
+                        <option value="">Selecciona Producto Base...</option>
+                    </select>
                 </div>
                 <div class="space-y-2">
-                    <label class="text-xs text-rose-400 font-bold uppercase">Marca B (Competencia)</label>
-                    <input type="text" id="brandB" value="Kotex" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200">
+                    <label class="text-xs text-rose-400 font-bold uppercase">Referencia B (A Comparar)</label>
+                    <select id="compareProdB" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:ring-indigo-500">
+                        <option value="">Selecciona Producto a Comparar...</option>
+                    </select>
                 </div>
             </div>
 
-            <!-- RESULTADOS COMPARATIVOS -->
-            <div id="compareResults" class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 hidden">
-                <div id="cardBrandA" class="p-4 bg-slate-900/60 border border-indigo-500/30 rounded-lg space-y-3"></div>
-                <div id="cardBrandB" class="p-4 bg-slate-900/60 border border-rose-500/30 rounded-lg space-y-3"></div>
+            <!-- RESULTADOS Y DIFERENCIALES -->
+            <div id="productCompareResults" class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 hidden">
+                <div id="cardProdA" class="p-4 bg-slate-900/80 border border-indigo-500/30 rounded-xl space-y-3"></div>
+                <div id="cardProdB" class="p-4 bg-slate-900/80 border border-rose-500/30 rounded-xl space-y-3"></div>
             </div>
         </div>
 
@@ -213,14 +217,36 @@
                         prodSelect.appendChild(opt);
                     });
                 }
+
+                populateProductCompareSelects(data.products);
             } catch (err) {
                 console.error("Error cargando opciones de filtro:", err);
             }
         }
 
+        function populateProductCompareSelects(products) {
+            const selA = document.getElementById('compareProdA');
+            const selB = document.getElementById('compareProdB');
+            
+            selA.innerHTML = '<option value="">Selecciona Producto Base...</option>';
+            selB.innerHTML = '<option value="">Selecciona Producto a Comparar...</option>';
+
+            products.forEach(p => {
+                const optA = document.createElement('option');
+                optA.value = p;
+                optA.innerText = p;
+                selA.appendChild(optA);
+
+                const optB = document.createElement('option');
+                optB.value = p;
+                optB.innerText = p;
+                selB.appendChild(optB);
+            });
+        }
+
         function populateSelect(id, items, selectedVal) {
             const select = document.getElementById(id);
-            if (select.children.length > 1) return; // Evitar sobreescribir si ya está lleno
+            if (select.children.length > 1) return;
             items.forEach(item => {
                 const opt = document.createElement('option');
                 opt.value = item;
@@ -273,58 +299,90 @@
             }
         }
 
-        async function runComparison() {
-            const bA = document.getElementById('brandA').value;
-            const bB = document.getElementById('brandB').value;
+        async function runProductComparison() {
+            const prodA = document.getElementById('compareProdA').value;
+            const prodB = document.getElementById('compareProdB').value;
             const retailer = document.getElementById('filterRetailer').value;
 
-            if (!bA || !bB) return alert("Ingresa ambas marcas.");
+            if (!prodA || !prodB) return alert("Por favor selecciona ambas referencias para realizar la comparación.");
 
             try {
-                const res = await fetch(`${API_BASE}/analytics/compare?brand_a=${bA}&brand_b=${bB}&retailer=${retailer}`);
+                const res = await fetch(`${API_BASE}/analytics/compare-products?product_a=${encodeURIComponent(prodA)}&product_b=${encodeURIComponent(prodB)}&retailer=${retailer}`);
                 const data = await res.json();
 
-                document.getElementById('compareResults').classList.remove('hidden');
+                document.getElementById('productCompareResults').classList.remove('hidden');
 
-                renderCompareCard('cardBrandA', data.brand_a, 'indigo');
-                renderCompareCard('cardBrandB', data.brand_b, 'rose');
+                renderProductCardA('cardProdA', data.product_a);
+                renderProductCardB('cardProdB', data.product_b, data.differentials);
             } catch (err) {
-                console.error("Error al comparar:", err);
+                console.error("Error ejecutando comparativa de referencias:", err);
             }
         }
 
-        function renderCompareCard(elementId, data, color) {
+        function renderProductCardA(elementId, prod) {
             const card = document.getElementById(elementId);
-            const m = data.metrics || {};
             card.innerHTML = `
-                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
-                    <h3 class="font-bold text-sm text-${color}-400">${data.name}</h3>
-                    <span class="text-[10px] text-slate-400 font-mono">${m.total_skus || 0} SKUs</span>
+                <div class="border-b border-slate-800 pb-2">
+                    <span class="text-[10px] text-indigo-400 font-bold uppercase block">Referencia Base</span>
+                    <h3 class="font-bold text-sm text-slate-100 truncate" title="${prod.product_name}">${prod.product_name || 'Sin información'}</h3>
+                    <span class="text-[10px] text-slate-400">${prod.brand || 'Sin Marca'}</span>
                 </div>
-                <div class="grid grid-cols-2 gap-2 text-xs pt-1">
+                <div class="grid grid-cols-2 gap-3 text-xs pt-2">
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Posición Prom.</span>
-                        <span class="font-bold text-slate-200">#${m.avg_position || '-'}</span>
+                        <span class="text-slate-500 block text-[10px]">Posición Promedio</span>
+                        <span class="font-bold text-slate-200">#${prod.avg_position || '-'}</span>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">En Top 10</span>
-                        <span class="font-bold text-slate-200">${m.top10_count || 0} SKUs</span>
+                        <span class="text-slate-500 block text-[10px]">Precio Final Promedio</span>
+                        <span class="font-bold text-emerald-400">$${Number(prod.avg_final_price || 0).toLocaleString()}</span>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Lista Prom.</span>
-                        <span class="font-bold text-slate-200">$${Number(m.avg_price || 0).toLocaleString()}</span>
+                        <span class="text-slate-500 block text-[10px]">Precio Lista Promedio</span>
+                        <span class="font-bold text-slate-300">$${Number(prod.avg_price || 0).toLocaleString()}</span>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Final Prom.</span>
-                        <span class="font-bold text-emerald-400">$${Number(m.avg_final_price || 0).toLocaleString()}</span>
+                        <span class="text-slate-500 block text-[10px]">Total Registros</span>
+                        <span class="font-bold text-slate-200">${prod.total_skus || 0}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderProductCardB(elementId, prod, diff) {
+            const card = document.getElementById(elementId);
+            
+            const priceDiffBadge = diff.is_b_cheaper 
+                ? `<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-bold">-$${Math.abs(diff.price_diff).toLocaleString()} (${Math.abs(diff.price_pct)}% más económica)</span>`
+                : `<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px] font-bold">+$${diff.price_diff.toLocaleString()} (+${diff.price_pct}% más costosa)</span>`;
+
+            const posDiffBadge = diff.is_b_better_positioned
+                ? `<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-bold">${Math.abs(diff.pos_diff)} lugares arriba (Mejor Ubicada)</span>`
+                : `<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px] font-bold">${diff.pos_diff} lugares abajo (Peor Ubicada)</span>`;
+
+            card.innerHTML = `
+                <div class="border-b border-slate-800 pb-2">
+                    <span class="text-[10px] text-rose-400 font-bold uppercase block">Referencia en Comparación</span>
+                    <h3 class="font-bold text-sm text-slate-100 truncate" title="${prod.product_name}">${prod.product_name || 'Sin información'}</h3>
+                    <span class="text-[10px] text-slate-400">${prod.brand || 'Sin Marca'}</span>
+                </div>
+                <div class="grid grid-cols-2 gap-3 text-xs pt-2">
+                    <div>
+                        <span class="text-slate-500 block text-[10px]">Posición Promedio</span>
+                        <span class="font-bold text-slate-200">#${prod.avg_position || '-'}</span>
+                        <div class="mt-1">${posDiffBadge}</div>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">SKUs con Descuento</span>
-                        <span class="font-bold text-amber-400">${m.promo_skus || 0}</span>
+                        <span class="text-slate-500 block text-[10px]">Precio Final Promedio</span>
+                        <span class="font-bold text-emerald-400">$${Number(prod.avg_final_price || 0).toLocaleString()}</span>
+                        <div class="mt-1">${priceDiffBadge}</div>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Agotados (OOS)</span>
-                        <span class="font-bold text-rose-400">${m.oos_skus || 0}</span>
+                        <span class="text-slate-500 block text-[10px]">Precio Lista Promedio</span>
+                        <span class="font-bold text-slate-300">$${Number(prod.avg_price || 0).toLocaleString()}</span>
+                    </div>
+                    <div>
+                        <span class="text-slate-500 block text-[10px]">Total Registros</span>
+                        <span class="font-bold text-slate-200">${prod.total_skus || 0}</span>
                     </div>
                 </div>
             `;
