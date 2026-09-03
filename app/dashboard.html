@@ -27,13 +27,31 @@
                     <i class="fa-solid fa-trash-can"></i> Limpiar BD
                 </button>
                 <button onclick="triggerScraper()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 text-xs font-semibold transition flex items-center gap-2 shadow-lg shadow-indigo-600/30">
-                    <i class="fa-solid fa-rotate text-sm"></i> Ejecuci&oacute;n Manual
+                    <i class="fa-solid fa-rotate text-sm"></i> Ejecución Manual
                 </button>
             </div>
         </div>
     </nav>
 
     <div class="pt-24 pb-12 max-w-7xl mx-auto px-6 space-y-8">
+
+        <!-- MÓDULO DE CARGA DE EXCEL -->
+        <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
+            <div class="border-b border-slate-700/50 pb-3">
+                <h2 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-file-excel text-emerald-400"></i> Cargar Requisitos de Portafolio y Descripciones (Excel)
+                </h2>
+                <p class="text-xs text-slate-400">Sube el archivo Excel con los productos infaltables y descripciones esperadas</p>
+            </div>
+            
+            <form id="uploadExcelForm" onsubmit="uploadExcel(event)" class="flex flex-wrap md:flex-nowrap gap-3 items-center">
+                <input type="file" id="excelFile" accept=".xlsx, .xls" required class="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-indigo-400 hover:file:bg-slate-700 border border-slate-700 rounded-lg bg-slate-900/50 cursor-pointer">
+                <button type="submit" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition whitespace-nowrap shadow-md">
+                    <i class="fa-solid fa-cloud-arrow-up mr-1"></i> Subir y Actualizar
+                </button>
+            </form>
+            <div id="uploadStatus" class="text-xs font-semibold mt-2 hidden"></div>
+        </div>
 
         <!-- FILTROS GLOBALES -->
         <div class="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl flex flex-wrap gap-4 items-center justify-between">
@@ -45,9 +63,9 @@
                     </select>
                 </div>
                 <div>
-                    <label class="block text-[10px] text-slate-400 uppercase font-bold mb-1">T&eacute;rmino de B&uacute;squeda</label>
+                    <label class="block text-[10px] text-slate-400 uppercase font-bold mb-1">Término de Búsqueda</label>
                     <select id="filterTerm" onchange="loadDashboardData()" class="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:ring-indigo-500">
-                        <option value="ALL">Todos los T&eacute;rminos</option>
+                        <option value="ALL">Todos los Términos</option>
                     </select>
                 </div>
             </div>
@@ -71,6 +89,57 @@
             <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
                 <span class="text-slate-400 text-xs font-medium">Descuento Promedio</span>
                 <p id="kpiDiscount" class="text-2xl font-extrabold text-amber-400 mt-2">0%</p>
+            </div>
+        </div>
+
+        <!-- NUEVA SECCIÓN: CUMPLIMIENTO Y REQUISITOS -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Widget 1: Cumplimiento de Descripción -->
+            <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
+                <div class="border-b border-slate-700/50 pb-3">
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-align-left text-indigo-400"></i> Cumplimiento de Descripción
+                    </h2>
+                    <p class="text-xs text-slate-400">Coincidencia exacta de texto esperado vs capturado</p>
+                </div>
+                <div class="overflow-x-auto max-h-80 overflow-y-auto">
+                    <table class="w-full text-left text-xs text-slate-300">
+                        <thead class="bg-slate-900/80 text-slate-400 uppercase font-bold text-[10px] sticky top-0">
+                            <tr>
+                                <th class="p-3">Producto</th>
+                                <th class="p-3">Estado</th>
+                                <th class="p-3">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tblContentCompliance" class="divide-y divide-slate-800">
+                            <tr><td colspan="3" class="p-4 text-center text-slate-500">Cargando datos...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Widget 2: Portafolio Infaltable -->
+            <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
+                <div class="border-b border-slate-700/50 pb-3">
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-boxes-packing text-emerald-400"></i> Portafolio Infaltable
+                    </h2>
+                    <p class="text-xs text-slate-400">Presencia de productos obligatorios por retailer</p>
+                </div>
+                <div class="overflow-x-auto max-h-80 overflow-y-auto">
+                    <table class="w-full text-left text-xs text-slate-300">
+                        <thead class="bg-slate-900/80 text-slate-400 uppercase font-bold text-[10px] sticky top-0">
+                            <tr>
+                                <th class="p-3">Retailer</th>
+                                <th class="p-3">Producto</th>
+                                <th class="p-3">Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tblAssortmentCompliance" class="divide-y divide-slate-800">
+                            <tr><td colspan="3" class="p-4 text-center text-slate-500">Cargando datos...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -110,12 +179,12 @@
             </div>
         </div>
 
-        <!-- TABLA DE AUDITOR&Iacute;A DIGITAL SHELF -->
+        <!-- TABLA DE AUDITORÍA DIGITAL SHELF -->
         <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
             <div class="flex flex-wrap justify-between items-center gap-4 border-b border-slate-700/50 pb-4">
                 <div>
                     <h2 class="text-base font-bold text-white flex items-center gap-2">
-                        <i class="fa-solid fa-list-ol text-emerald-400"></i> Auditor&iacute;a de Posiciones y Productos
+                        <i class="fa-solid fa-list-ol text-emerald-400"></i> Auditoría de Posiciones y Productos
                     </h2>
                     <p class="text-xs text-slate-400">Registros agrupados por permanencia y estabilidad de datos</p>
                 </div>
@@ -136,7 +205,7 @@
                     </select>
                 </div>
                 <div>
-                    <label class="block text-[10px] text-slate-400 uppercase font-bold mb-1">B&uacute;squeda Manual</label>
+                    <label class="block text-[10px] text-slate-400 uppercase font-bold mb-1">Búsqueda Manual</label>
                     <input type="text" id="tableSearch" onkeyup="loadPositionsTable()" placeholder="Palabra clave..." class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                 </div>
             </div>
@@ -164,8 +233,143 @@
 
     </div>
 
+    <!-- MODAL DE DIFERENCIA DE TEXTO -->
+    <div id="diffModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur hidden">
+        <div class="bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-xl p-6 space-y-4 relative shadow-2xl">
+            <button onclick="closeDiffModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <h3 class="text-base font-bold text-white flex items-center gap-2">
+                <i class="fa-solid fa-code-compare text-indigo-400"></i> Comparativa de Descripción
+            </h3>
+            <p class="text-xs text-slate-300 font-semibold"><span class="text-slate-500">Producto:</span> <span id="modalProdName"></span></p>
+            
+            <div class="space-y-3 pt-2">
+                <div>
+                    <span class="text-[10px] uppercase font-bold text-emerald-400">Descripción Esperada:</span>
+                    <div id="modalExpected" class="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-300 font-mono mt-1 break-words"></div>
+                </div>
+                <div>
+                    <span class="text-[10px] uppercase font-bold text-rose-400">Descripción Capturada:</span>
+                    <div id="modalCaptured" class="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-300 font-mono mt-1 break-words"></div>
+                </div>
+            </div>
+            
+            <div class="text-right pt-2">
+                <button onclick="closeDiffModal()" class="px-4 py-2 bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-semibold rounded-lg transition">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API_BASE = window.location.origin;
+
+        async function uploadExcel(event) {
+            event.preventDefault();
+            const fileInput = document.getElementById('excelFile');
+            const statusDiv = document.getElementById('uploadStatus');
+            if (!fileInput.files.length) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            statusDiv.classList.remove('hidden', 'text-emerald-400', 'text-rose-400');
+            statusDiv.classList.add('text-indigo-400');
+            statusDiv.innerText = "Subiendo y procesando archivo...";
+
+            try {
+                const res = await fetch(`${API_BASE}/admin/upload-requirements`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    statusDiv.classList.replace('text-indigo-400', 'text-emerald-400');
+                    statusDiv.innerText = data.message || "¡Requisitos actualizados exitosamente!";
+                    loadContentCompliance();
+                    loadAssortmentCompliance();
+                } else {
+                    throw new Error(data.detail || "Error al procesar el archivo Excel.");
+                }
+            } catch (err) {
+                statusDiv.classList.replace('text-indigo-400', 'text-rose-400');
+                statusDiv.innerText = err.message;
+            }
+        }
+
+        async function loadContentCompliance() {
+            try {
+                const res = await fetch(`${API_BASE}/content-compliance`);
+                const result = await res.json();
+                const items = result.data || [];
+                const tbody = document.getElementById('tblContentCompliance');
+
+                if (!items.length) {
+                    tbody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-500">Sin requisitos cargados.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = items.map((item, idx) => `
+                    <tr class="hover:bg-slate-800/30 transition">
+                        <td class="p-3 font-medium text-slate-200 max-w-xs truncate" title="${item.product_name}">${item.product_name}</td>
+                        <td class="p-3">
+                            ${item.estado === 'Cumple'
+                                ? '<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px]">Cumple</span>'
+                                : '<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px]">No cumple</span>'
+                            }
+                        </td>
+                        <td class="p-3">
+                            <button onclick='openDiffModal(${JSON.stringify(item)})' class="px-2 py-1 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded hover:bg-indigo-600 hover:text-white transition text-[10px]">
+                                Ver Detalle
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error("Error cargando cumplimiento de contenido:", err);
+            }
+        }
+
+        async function loadAssortmentCompliance() {
+            try {
+                const res = await fetch(`${API_BASE}/assortment-compliance`);
+                const result = await res.json();
+                const items = result.data || [];
+                const tbody = document.getElementById('tblAssortmentCompliance');
+
+                if (!items.length) {
+                    tbody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-500">Sin portafolio infaltable cargado.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = items.map(item => `
+                    <tr class="hover:bg-slate-800/30 transition">
+                        <td class="p-3"><span class="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded text-[10px]">${item.retailer}</span></td>
+                        <td class="p-3 font-medium text-slate-200 max-w-xs truncate" title="${item.product_name}">${item.product_name}</td>
+                        <td class="p-3">
+                            ${item.estado === 'Presente'
+                                ? '<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px]">Presente</span>'
+                                : '<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px]">Faltante</span>'
+                            }
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error("Error cargando portafolio infaltable:", err);
+            }
+        }
+
+        function openDiffModal(item) {
+            document.getElementById('modalProdName').innerText = item.product_name;
+            document.getElementById('modalExpected').innerText = item.descripcion_esperada || '(Vacio)';
+            document.getElementById('modalCaptured').innerText = item.descripcion_capturada || '(Sin captura)';
+            document.getElementById('diffModal').classList.remove('hidden');
+        }
+
+        function closeDiffModal() {
+            document.getElementById('diffModal').classList.add('hidden');
+        }
 
         async function loadDashboardData() {
             const retailer = document.getElementById('filterRetailer').value;
@@ -175,11 +379,9 @@
                 const res = await fetch(`${API_BASE}/dashboard-data?retailer=${retailer}&search_term=${term}`);
                 const data = await res.json();
 
-                // Actualizar Filtros opcionales
                 populateSelect('filterRetailer', data.filters.retailers, retailer);
                 populateSelect('filterTerm', data.filters.search_terms, term);
 
-                // Actualizar KPIs
                 document.getElementById('kpiTotal').innerText = data.summary.total_monitored.toLocaleString();
                 document.getElementById('kpiAvailability').innerText = `${data.summary.availability_rate}%`;
                 document.getElementById('kpiOOS').innerText = data.summary.out_of_stock_alerts;
@@ -395,6 +597,8 @@
                 const data = await res.json();
                 alert(data.message);
                 loadDashboardData();
+                loadContentCompliance();
+                loadAssortmentCompliance();
             } catch (err) {
                 alert("Error al limpiar la base de datos.");
             }
@@ -407,6 +611,8 @@
                 const data = await res.json();
                 alert(data.message);
                 loadDashboardData();
+                loadContentCompliance();
+                loadAssortmentCompliance();
             } catch (err) {
                 alert("Error ejecutando el scraper.");
             }
@@ -415,6 +621,8 @@
         document.addEventListener('DOMContentLoaded', () => {
             loadDashboardData();
             loadFilterOptions();
+            loadContentCompliance();
+            loadAssortmentCompliance();
         });
     </script>
 </body>
