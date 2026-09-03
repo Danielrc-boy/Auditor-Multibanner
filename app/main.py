@@ -7,7 +7,7 @@ from uuid import UUID
 from typing import Optional, List
 from datetime import datetime
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -436,23 +436,40 @@ def clean_database(confirm: bool = Query(False)):
 @app.get("/analytics/options")
 def get_analytics_options(
     retailer: str = "ALL",
-    search_term: str = "ALL",
-    db: Session = Depends(get_db)
+    search_term: str = "ALL"
 ):
-    query = db.query(ProductPosition)
+    """Obtiene listas de marcas y productos filtrados dinámicamente según la BD PostgreSQL."""
+    conn = get_db_connection()
+    try:
+        where_clause = " WHERE 1=1"
+        params = []
 
-    if retailer != "ALL":
-        query = query.filter(ProductPosition.retailer == retailer)
-    if search_term != "ALL":
-        query = query.filter(ProductPosition.search_term == search_term)
+        if retailer and retailer != "ALL":
+            where_clause += " AND retailer ILIKE %s"
+            params.append(f"%{retailer}%")
+        if search_term and search_term != "ALL":
+            where_clause += " AND search_term ILIKE %s"
+            params.append(f"%{search_term}%")
 
-    brands = [b[0] for b in query.select_from(ProductPosition).distinct(ProductPosition.brand).values(ProductPosition.brand) if b[0]]
-    products = [p[0] for p in query.select_from(ProductPosition).distinct(ProductPosition.product_name).values(ProductPosition.product_name) if p[0]]
+        with conn.cursor() as cur:
+            # Consulta de marcas distintas
+            sql_brands = f"SELECT DISTINCT COALESCE(brand, 'Sin Marca') as brand FROM scraper_results {where_clause} ORDER BY brand;"
+            cur.execute(sql_brands, tuple(params))
+            brands_rows = cur.fetchall()
+            brands = [r["brand"] for r in brands_rows if r["brand"]]
 
-    return {
-        "brands": sorted(brands),
-        "products": sorted(products)
-    }
+            # Consulta de productos distintos
+            sql_products = f"SELECT DISTINCT product_name FROM scraper_results {where_clause} WHERE product_name IS NOT NULL ORDER BY product_name;"
+            cur.execute(sql_products, tuple(params))
+            products_rows = cur.fetchall()
+            products = [r["product_name"] for r in products_rows if r["product_name"]]
+
+        return {
+            "brands": brands,
+            "products": products
+        }
+    finally:
+        conn.close()
 
 
 # --- ENDPOINT ANALYTICS: TABLA DE POSICIONES DEDUPLICADA ---
