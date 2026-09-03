@@ -12,14 +12,12 @@ class VTEXScraper:
         self.domain = "www.carulla.com" if self.retailer == "carulla" else "www.exito.com"
         self.base_url = f"https://{self.domain}"
 
-        # Headers idénticos a los que usa un navegador real en Colombia
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "es-CO,es-419;q=0.9,es;q=0.8",
             "Referer": f"{self.base_url}/",
             "Origin": self.base_url,
-            # Cookie estándar para activar catálogo público de Colombia en VTEX IO
             "Cookie": "vtex_segment=eyJjdXJyZW5jeUNvZGUiOiJDT1AiLCJjdXJyZW5jeVN5bWJvbCI6IiQiLCJjb3VudHJ5Q29kZSI6IkNPTCJ9"
         }
 
@@ -27,19 +25,11 @@ class VTEXScraper:
         clean_keyword = keyword.strip()
         encoded_keyword = urllib.parse.quote(clean_keyword)
 
-        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=45.0, verify=False, follow_redirects=True) as client:
             
             # --- ESTRATEGIA 1: Intelligent Search V2 (Endpoint nativo de Éxito/Carulla) ---
-            is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{encoded_keyword}"
-            is_params = {
-                "page": 1,
-                "count": limit,
-                "query": clean_keyword,
-                "sort": "score_desc",
-                "locale": "es-CO"
-            }
-            
-            req_url, params = self._build_request(is_url, is_params)
+            is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{encoded_keyword}?page=1&count={limit}&query={encoded_keyword}&sort=score_desc&locale=es-CO"
+            req_url, params = self._build_request(is_url)
 
             try:
                 res = await client.get(req_url, headers=self.headers, params=params)
@@ -49,17 +39,11 @@ class VTEXScraper:
                     if products:
                         return self._parse_intelligent_search(products, clean_keyword, limit)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] IS V2 falló: {e}", flush=True)
+                print(f"[WARN {self.retailer.upper()}] Intelligent Search V2 falló: {e}", flush=True)
 
-            # --- ESTRATEGIA 2: Search API V1 Fallback ---
-            legacy_url = f"{self.base_url}/api/catalog_system/pub/products/search"
-            legacy_params = {
-                "ft": clean_keyword,
-                "_from": 0,
-                "_to": limit - 1,
-                "sc": 1
-            }
-            req_leg_url, leg_params = self._build_request(legacy_url, legacy_params)
+            # --- ESTRATEGIA 2: Catalog System Traditional API (SC=1 Colombia) ---
+            legacy_url = f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_keyword}?_from=0&_to={limit-1}&sc=1"
+            req_leg_url, leg_params = self._build_request(legacy_url)
 
             try:
                 res_leg = await client.get(req_leg_url, headers=self.headers, params=leg_params)
@@ -68,19 +52,17 @@ class VTEXScraper:
                     if isinstance(data, list) and len(data) > 0:
                         return self._parse_catalog_search(data, clean_keyword)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] Legacy Search falló: {e}", flush=True)
+                print(f"[WARN {self.retailer.upper()}] Legacy Catalog Search falló: {e}", flush=True)
 
         return []
 
-    def _build_request(self, target_url: str, params_dict: dict = None):
+    def _build_request(self, target_url: str):
         if SCRAPERAPI_KEY:
-            if params_dict:
-                query_string = "&".join([f"{k}={v}" for k, v in params_dict.items()])
-                full_target = f"{target_url}?{query_string}"
-            else:
-                full_target = target_url
-            return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": full_target, "keep_headers": "true"}
-        return target_url, params_dict
+            # Importante: Codificar la URL completa para evitar romper los parámetros internos
+            encoded_target = urllib.parse.quote_plus(target_url)
+            proxy_url = f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={encoded_target}&keep_headers=true"
+            return proxy_url, {}
+        return target_url, {}
 
     def _parse_intelligent_search(self, products: list, search_term: str, limit: int) -> List[ExtractedProductData]:
         parsed = []
@@ -91,12 +73,9 @@ class VTEXScraper:
                 sellers = item.get("sellers", [{}])
                 comm = sellers[0].get("commertialOffer", {}) if sellers else {}
 
-                # Extracción de precios con soporte para estructura VTEX IO
                 price = float(comm.get("Price", 0.0) or prod.get("price", 0.0) or 0.0)
                 list_price = float(comm.get("ListPrice", 0.0) or prod.get("listPrice", 0.0) or price)
                 discount_price = price if (0 < price < list_price) else None
-                
-                # Disponibilidad de stock
                 in_stock = comm.get("AvailableQuantity", 0) > 0 if "AvailableQuantity" in comm else prod.get("isAvailable", True)
 
                 parsed.append(ExtractedProductData(
