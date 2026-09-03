@@ -220,12 +220,13 @@
                             <th class="p-3">Marca</th>
                             <th class="p-3">Precio Lista</th>
                             <th class="p-3">Precio Final</th>
+                            <th class="p-3">% DESC.</th>
                             <th class="p-3">Permanencia</th>
                             <th class="p-3">Estado</th>
                         </tr>
                     </thead>
                     <tbody id="positionsTableBody" class="divide-y divide-slate-800">
-                        <tr><td colspan="8" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
+                        <tr><td colspan="9" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -498,18 +499,31 @@
 
                 const tbody = document.getElementById('positionsTableBody');
                 if (!rows.length) {
-                    tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="9" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
                     return;
                 }
 
-                tbody.innerHTML = rows.map(r => `
+                tbody.innerHTML = rows.map(r => {
+                    const listPrice = Number(r.price) || 0;
+                    const finalPrice = Number(r.discount_price && r.discount_price > 0 ? r.discount_price : r.price) || 0;
+
+                    let discountBadge = '<span class="text-slate-600">-</span>';
+                    if (listPrice > 0 && finalPrice > 0 && listPrice > finalPrice) {
+                        const pct = Math.round(((listPrice - finalPrice) / listPrice) * 100);
+                        if (pct > 0) {
+                            discountBadge = `<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-bold">-${pct}%</span>`;
+                        }
+                    }
+
+                    return `
                     <tr class="hover:bg-slate-800/30 transition">
                         <td class="p-3 font-bold ${r.position <= 10 ? 'text-indigo-400' : 'text-slate-400'}">#${r.position}</td>
                         <td class="p-3"><span class="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded text-[10px]">${r.retailer}</span></td>
                         <td class="p-3 font-medium text-slate-200 max-w-xs truncate" title="${r.product_name}">${r.product_name}</td>
                         <td class="p-3 text-slate-400">${r.brand}</td>
-                        <td class="p-3 font-mono">$${Number(r.price).toLocaleString()}</td>
-                        <td class="p-3 font-mono text-emerald-400 font-semibold">$${Number(r.discount_price && r.discount_price > 0 ? r.discount_price : r.price).toLocaleString()}</td>
+                        <td class="p-3 font-mono">$${listPrice.toLocaleString()}</td>
+                        <td class="p-3 font-mono text-emerald-400 font-semibold">$${finalPrice.toLocaleString()}</td>
+                        <td class="p-3 font-mono">${discountBadge}</td>
                         <td class="p-3">
                             <span class="px-2 py-0.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded text-[10px] font-mono">
                                 ${r.run_count || 1} corrida(s) sin cambios
@@ -522,7 +536,8 @@
                             }
                         </td>
                     </tr>
-                `).join('');
+                `;
+                }).join('');
             } catch (err) {
                 console.error("Error cargando tabla:", err);
             }
