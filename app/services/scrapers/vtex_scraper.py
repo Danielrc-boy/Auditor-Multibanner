@@ -18,26 +18,27 @@ class VTEXScraper:
             self.default_seller = "Exito"
 
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "es-CO,es;q=0.9",
         }
 
-    def _build_request(self, target_url: str, params_dict: dict = None, render_js: bool = False):
+    def _build_request(self, target_url: str, params_dict: dict = None):
+        """
+        Construye la solicitud utilizando ScraperAPI con geolocalización residencial en Colombia.
+        """
         if params_dict:
             query_string = urllib.parse.urlencode(params_dict)
             full_target = f"{target_url}?{query_string}"
         else:
             full_target = target_url
 
-        if SCRAPERAPI_KEY:
+        if SCRAPERAPI_KEY and SCRAPERAPI_KEY.strip() != "":
             scraper_params = {
                 "api_key": SCRAPERAPI_KEY,
                 "url": full_target,
                 "country_code": "co",
             }
-            if render_js:
-                scraper_params["render"] = "true"
             return "http://api.scraperapi.com/", scraper_params
 
         return full_target, None
@@ -45,10 +46,10 @@ class VTEXScraper:
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
         encoded_term = urllib.parse.quote(keyword)
 
-        async with httpx.AsyncClient(timeout=60.0, verify=False, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=45.0, verify=False, follow_redirects=True) as client:
             
             # -----------------------------------------------------------------
-            # INTENTO 1: API REST Intelligent Search
+            # INTENTO 1: REST Intelligent Search (API Principal)
             # -----------------------------------------------------------------
             is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{encoded_term}"
             is_params = {
@@ -62,8 +63,6 @@ class VTEXScraper:
             
             try:
                 response = await client.get(req_is_url, headers=self.headers, params=req_is_params)
-                print(f"[{self.retailer.upper()}] HTTP Status (IS): {response.status_code}", flush=True)
-                
                 if response.status_code in (200, 206):
                     data = response.json()
                     products_raw = data.get("products", []) if isinstance(data, dict) else []
@@ -71,13 +70,11 @@ class VTEXScraper:
                         results = self._parse_intelligent_search(products_raw, keyword, limit)
                         if results:
                             return results
-                else:
-                    print(f"[{self.retailer.upper()}] Body (IS): {response.text[:200]}", flush=True)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] REST Intelligent Search falló: {e}", flush=True)
+                print(f"[WARN {self.retailer.upper()}] Intelligent Search falló: {e}", flush=True)
 
             # -----------------------------------------------------------------
-            # INTENTO 2: API Legacy de Catálogo VTEX
+            # INTENTO 2: Legacy Catalog Search (Fallback Ultra-Estable)
             # -----------------------------------------------------------------
             legacy_url = f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_term}"
             legacy_params = {"_from": 0, "_to": limit - 1}
@@ -85,27 +82,12 @@ class VTEXScraper:
 
             try:
                 response = await client.get(req_leg_url, headers=self.headers, params=req_leg_params)
-                print(f"[{self.retailer.upper()}] HTTP Status (Legacy): {response.status_code}", flush=True)
-
                 if response.status_code in (200, 206):
                     products_raw = response.json()
                     if isinstance(products_raw, list) and len(products_raw) > 0:
                         return self._parse_intelligent_search(products_raw, keyword, limit)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] Legacy Search falló: {e}", flush=True)
-
-            # -----------------------------------------------------------------
-            # INTENTO 3: Fallback HTML Scraping mediante ScraperAPI (Render JS)
-            # -----------------------------------------------------------------
-            site_search_url = f"{self.base_url}/{encoded_term}?map=ft"
-            req_html_url, req_html_params = self._build_request(site_search_url, render_js=True)
-
-            try:
-                print(f"[{self.retailer.upper()}] Intentando Render JS en Frontend...", flush=True)
-                response = await client.get(req_html_url, headers=self.headers, params=req_html_params)
-                print(f"[{self.retailer.upper()}] HTTP Status (HTML Render): {response.status_code}", flush=True)
-            except Exception as e:
-                print(f"[ERROR {self.retailer.upper()}] Render JS falló: {e}", flush=True)
+                print(f"[ERROR {self.retailer.upper()}] Legacy Search falló: {e}", flush=True)
 
         return []
 
@@ -139,7 +121,7 @@ class VTEXScraper:
                     seller_name=seller_name
                 ))
             except Exception as e:
-                print(f"[PARSER IS ERROR] {self.retailer.upper()}: {e}", flush=True)
+                print(f"[PARSER ERROR] {self.retailer.upper()}: {e}", flush=True)
                 continue
         return parsed
 
