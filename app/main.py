@@ -46,7 +46,7 @@ def get_db_connection():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
-# --- FUNCIÓN DE GUARDADO COMPATIBLE (SOPORTA DICCIONARIOS Y OBJETOS) ---
+# --- FUNCIÓN DE GUARDADO COMPATIBLE ---
 def save_scraper_results(conn, results: list, retailer: str) -> int:
     if not results:
         return 0
@@ -62,7 +62,6 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
     with conn.cursor() as cur:
         for item in results:
             try:
-                # Extrae los datos sin importar si el item es un Dict o una Clase Pydantic
                 term = item.get("search_keyword") if isinstance(item, dict) else getattr(item, "search_keyword", None)
                 pos = item.get("search_position") if isinstance(item, dict) else getattr(item, "search_position", None)
                 title = (item.get("title") if isinstance(item, dict) else getattr(item, "title", "")) or ""
@@ -90,47 +89,38 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
     conn.commit()
     return saved_count
 
-# --- SCRAPER DEDICADO Y ROBUSTO PARA VTEX (ÉXITO & CARULLA) ---
+# --- SCRAPER DEDICADO Y ROBUSTO PARA VTEX ---
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
         self.retailer = retailer.lower()
         self.base_url = "https://www.carulla.com" if self.retailer == "carulla" else "https://www.exito.com"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Language": "es-CO,es;q=0.9",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "es-CO,es-419;q=0.9,es;q=0.8",
+            "Referer": f"{self.base_url}/",
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[dict]:
-        variables_payload = {
-            "first": limit,
-            "after": "0",
-            "sort": "score_desc",
-            "term": keyword,
-            "selectedFacets": [
-                {"key": "channel", "value": json.dumps({"salesChannel": "1", "regionId": ""})},
-                {"key": "locale", "value": "es-CO"}
-            ]
-        }
-        encoded_variables = urllib.parse.quote(json.dumps(variables_payload))
-        gql_url = f"{self.base_url}/api/graphql?operationName=SearchQuery&variables={encoded_variables}"
+        # Método primario: REST Catalog API (Alta disponibilidad en tiendas VTEX)
+        clean_keyword = urllib.parse.quote(keyword)
+        search_url = f"{self.base_url}/api/catalog_system/pub/products/search/{clean_keyword}?_from=0&_to={limit-1}"
         
-        request_url, params = self._build_request(gql_url, None)
+        request_url, params = self._build_request(search_url, None)
 
         async with httpx.AsyncClient(timeout=25.0, verify=False, follow_redirects=True) as client:
-            # Estrategia 1: GraphQL Directo
             try:
                 response = await client.get(request_url, headers=self.headers, params=params)
-                if response.status_code == 200:
-                    products = self._parse_graphql_response(response.json(), keyword)
-                    if products:
-                        return products
+                if response.status_code in (200, 206):
+                    data = response.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        return self._parse_catalog_search(data, keyword)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] GraphQL falló para '{keyword}': {e}", flush=True)
+                print(f"[WARN {self.retailer.upper()}] Catalog API falló para '{keyword}': {e}", flush=True)
 
-            # Estrategia 2: Fallback REST Intelligent Search
-            is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{urllib.parse.quote(keyword)}"
-            is_params = {"page": 1, "count": limit, "sort": "score_desc", "locale": "es-CO"}
+            # Fallback: Intelligent Search API
+            is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{clean_keyword}"
+            is_params = {"page": 1, "count": limit, "sort": "score_desc"}
             req_is_url, req_is_params = self._build_request(is_url, is_params)
             
             try:
@@ -141,7 +131,7 @@ class VTEXScraper:
                     if products_raw:
                         return self._parse_intelligent_search(products_raw, keyword, limit)
             except Exception as e:
-                print(f"[ERROR {self.retailer.upper()}] REST Search falló para '{keyword}': {e}", flush=True)
+                print(f"[ERROR {self.retailer.upper()}] IS Search falló para '{keyword}': {e}", flush=True)
 
         return []
 
@@ -155,30 +145,31 @@ class VTEXScraper:
             return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": full_target}
         return target_url, params_dict
 
-    def _parse_graphql_response(self, data: dict, search_term: str) -> List[dict]:
+    def _parse_catalog_search(self, products: list, search_term: str) -> List[dict]:
         parsed = []
-        try:
-            edges = data.get("data", {}).get("search", {}).get("products", {}).get("edges", [])
-            for idx, edge in enumerate(edges, start=1):
-                node = edge.get("node", {})
-                offers = node.get("offers", {}).get("offers", [{}])
-                offer = offers[0] if offers else {}
+        for idx, prod in enumerate(products, start=1):
+            try:
+                items = prod.get("items", [])
+                item = items[0] if items else {}
+                sellers = item.get("sellers", [{}])
+                comm = sellers[0].get("commertialOffer", {}) if sellers else {}
 
-                price = float(offer.get("price", 0.0) or 0.0)
-                list_price = float(offer.get("listPrice", 0.0) or price)
+                price = float(comm.get("Price", 0.0) or 0.0)
+                list_price = float(comm.get("ListPrice", 0.0) or price)
                 discount_price = price if (0 < price < list_price) else None
+                in_stock = comm.get("AvailableQuantity", 0) > 0
 
                 parsed.append({
                     "search_keyword": search_term,
                     "search_position": idx,
-                    "title": node.get("name", "Sin título"),
-                    "brand": node.get("brand", {}).get("name", "Sin Marca"),
+                    "title": prod.get("productName", "Sin título"),
+                    "brand": prod.get("brand", "Sin Marca"),
                     "base_price": list_price,
                     "discount_price": discount_price,
-                    "in_stock": "InStock" in str(offer.get("availability", ""))
+                    "in_stock": in_stock
                 })
-        except Exception as e:
-            print(f"[PARSER GQL ERROR] {self.retailer.upper()}: {e}", flush=True)
+            except Exception:
+                continue
         return parsed
 
     def _parse_intelligent_search(self, products: list, search_term: str, limit: int) -> List[dict]:
@@ -204,7 +195,7 @@ class VTEXScraper:
                     "discount_price": discount_price,
                     "in_stock": in_stock
                 })
-            except Exception as e:
+            except Exception:
                 continue
         return parsed
 
@@ -256,25 +247,7 @@ async def run_farmatodo_scraping(conn):
     return total_saved
 
 async def run_rappi_scraping(conn):
-    search_configs = []
-    with conn.cursor() as cur:
-        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
-        rows = cur.fetchall()
-        search_configs = [r["search_term"] for r in rows] if rows else []
-    if not search_configs:
-        return 0
-    total_saved = 0
-    try:
-        from app.services.scrapers.rappi_scraper import RappiScraper
-        scraper = RappiScraper()
-        for term in search_configs:
-            results = await scraper.search_keyword(term, limit=50)
-            if results:
-                count = save_scraper_results(conn, results, retailer="rappi")
-                total_saved += count
-    except Exception as e:
-        print(f"[SCRAPING ERROR] RAPPI: {e}", flush=True)
-    return total_saved
+    return 0  # Desactivado temporalmente mientras se renuevan credenciales 401 Unauthorized
 
 async def run_all_scraping(conn):
     total_records = 0
@@ -283,13 +256,37 @@ async def run_all_scraping(conn):
     total_records += await run_rappi_scraping(conn)
     return total_records
 
-class SearchConfigCreate(BaseModel):
-    search_term: Optional[str] = None
-    keyword: Optional[str] = None
-
 @app.get("/")
 def read_root():
     return {"message": "API Monitoreo Activa"}
+
+# --- ENDPOINT SOLICITADO POR EL FRONTEND (/results) ---
+@app.get("/results")
+def get_results(
+    limit: int = Query(200),
+    retailer: Optional[str] = Query("ALL"),
+    search_term: Optional[str] = Query("ALL")
+):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    sql = "SELECT * FROM scraper_results WHERE 1=1"
+    params = []
+
+    if retailer and retailer != "ALL":
+        sql += " AND retailer ILIKE %s"
+        params.append(f"%{retailer}%")
+    if search_term and search_term != "ALL":
+        sql += " AND search_term ILIKE %s"
+        params.append(f"%{search_term}%")
+
+    sql += " ORDER BY id DESC LIMIT %s;"
+    params.append(limit)
+
+    cursor.execute(sql, tuple(params))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
 
 @app.get("/dashboard-data")
 def get_dashboard_data(
