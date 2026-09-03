@@ -1,7 +1,7 @@
 import os
+import urllib.parse
 import httpx
 from typing import List
-from uuid import UUID, uuid4
 from app.schemas import ExtractedProductData
 
 SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
@@ -9,72 +9,137 @@ SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
         self.retailer = retailer.lower()
-        if self.retailer == "carulla":
-            self.base_url = "https://www.carulla.com"
-        else:
-            self.base_url = "https://www.exito.com"
+        self.domain = "www.carulla.com" if self.retailer == "carulla" else "www.exito.com"
+        self.base_url = f"https://{self.domain}"
+
+        # Headers idénticos a los que usa un navegador real en Colombia
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "application/json"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "es-CO,es-419;q=0.9,es;q=0.8",
+            "Referer": f"{self.base_url}/",
+            "Origin": self.base_url,
+            # Cookie estándar para activar catálogo público de Colombia en VTEX IO
+            "Cookie": "vtex_segment=eyJjdXJyZW5jeUNvZGUiOiJDT1AiLCJjdXJyZW5jeVN5bWJvbCI6IiQiLCJjb3VudHJ5Q29kZSI6IkNPTCJ9"
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        target_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}"
-
-        if SCRAPERAPI_KEY:
-            request_url = "http://api.scraperapi.com/"
-            params = {"api_key": SCRAPERAPI_KEY, "url": target_url}
-        else:
-            request_url = target_url
-            params = None
+        clean_keyword = keyword.strip()
+        encoded_keyword = urllib.parse.quote(clean_keyword)
 
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
-            try:
-                response = await client.get(request_url, headers=self.headers, params=params)
-                if response.status_code not in (200, 206):
-                    print(f"[ERROR {self.retailer.upper()}] Status {response.status_code}", flush=True)
-                    return []
-                raw_products = response.json()
-                return self._parse_products(raw_products, keyword, limit)
-            except Exception as e:
-                print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{keyword}': {e}", flush=True)
-                return []
+            
+            # --- ESTRATEGIA 1: Intelligent Search V2 (Endpoint nativo de Éxito/Carulla) ---
+            is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{encoded_keyword}"
+            is_params = {
+                "page": 1,
+                "count": limit,
+                "query": clean_keyword,
+                "sort": "score_desc",
+                "locale": "es-CO"
+            }
+            
+            req_url, params = self._build_request(is_url, is_params)
 
-    def _parse_products(self, raw_products: list, search_term: str, limit: int) -> List[ExtractedProductData]:
+            try:
+                res = await client.get(req_url, headers=self.headers, params=params)
+                if res.status_code == 200:
+                    data = res.json()
+                    products = data.get("products", [])
+                    if products:
+                        return self._parse_intelligent_search(products, clean_keyword, limit)
+            except Exception as e:
+                print(f"[WARN {self.retailer.upper()}] IS V2 falló: {e}", flush=True)
+
+            # --- ESTRATEGIA 2: Search API V1 Fallback ---
+            legacy_url = f"{self.base_url}/api/catalog_system/pub/products/search"
+            legacy_params = {
+                "ft": clean_keyword,
+                "_from": 0,
+                "_to": limit - 1,
+                "sc": 1
+            }
+            req_leg_url, leg_params = self._build_request(legacy_url, legacy_params)
+
+            try:
+                res_leg = await client.get(req_leg_url, headers=self.headers, params=leg_params)
+                if res_leg.status_code in (200, 206):
+                    data = res_leg.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        return self._parse_catalog_search(data, clean_keyword)
+            except Exception as e:
+                print(f"[WARN {self.retailer.upper()}] Legacy Search falló: {e}", flush=True)
+
+        return []
+
+    def _build_request(self, target_url: str, params_dict: dict = None):
+        if SCRAPERAPI_KEY:
+            if params_dict:
+                query_string = "&".join([f"{k}={v}" for k, v in params_dict.items()])
+                full_target = f"{target_url}?{query_string}"
+            else:
+                full_target = target_url
+            return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": full_target, "keep_headers": "true"}
+        return target_url, params_dict
+
+    def _parse_intelligent_search(self, products: list, search_term: str, limit: int) -> List[ExtractedProductData]:
         parsed = []
-        for idx, prod in enumerate(raw_products[:limit], start=1):
+        for idx, prod in enumerate(products[:limit], start=1):
             try:
                 items = prod.get("items", [])
-                if not items:
-                    continue
-                item = items[0]
+                item = items[0] if items else {}
                 sellers = item.get("sellers", [{}])
                 comm = sellers[0].get("commertialOffer", {}) if sellers else {}
-                base_price = float(comm.get("ListPrice", 0.0) or 0.0)
+
+                # Extracción de precios con soporte para estructura VTEX IO
+                price = float(comm.get("Price", 0.0) or prod.get("price", 0.0) or 0.0)
+                list_price = float(comm.get("ListPrice", 0.0) or prod.get("listPrice", 0.0) or price)
+                discount_price = price if (0 < price < list_price) else None
+                
+                # Disponibilidad de stock
+                in_stock = comm.get("AvailableQuantity", 0) > 0 if "AvailableQuantity" in comm else prod.get("isAvailable", True)
+
+                parsed.append(ExtractedProductData(
+                    search_keyword=search_term,
+                    search_position=idx,
+                    title=prod.get("productName") or prod.get("name") or "Sin título",
+                    brand=prod.get("brand") or prod.get("brandName") or "Sin Marca",
+                    base_price=list_price,
+                    discount_price=discount_price,
+                    in_stock=in_stock
+                ))
+            except Exception:
+                continue
+        return parsed
+
+    def _parse_catalog_search(self, products: list, search_term: str) -> List[ExtractedProductData]:
+        parsed = []
+        for idx, prod in enumerate(products, start=1):
+            try:
+                items = prod.get("items", [])
+                item = items[0] if items else {}
+                sellers = item.get("sellers", [{}])
+                comm = sellers[0].get("commertialOffer", {}) if sellers else {}
+
                 price = float(comm.get("Price", 0.0) or 0.0)
-                discount_price = None
-                if 0 < price < base_price:
-                    discount_price = price
-                elif base_price == 0 and price > 0:
-                    base_price = price
+                list_price = float(comm.get("ListPrice", 0.0) or price)
+                discount_price = price if (0 < price < list_price) else None
                 in_stock = comm.get("AvailableQuantity", 0) > 0
+
                 parsed.append(ExtractedProductData(
                     search_keyword=search_term,
                     search_position=idx,
                     title=prod.get("productName", "Sin título"),
                     brand=prod.get("brand", "Sin Marca"),
-                    base_price=base_price,
+                    base_price=list_price,
                     discount_price=discount_price,
                     in_stock=in_stock
                 ))
-            except Exception as e:
-                print(f"[PARSER ERROR] {self.retailer.upper()}: {e}", flush=True)
+            except Exception:
                 continue
         return parsed
 
-
 async def run_vtex_scraping(conn) -> int:
-    """Función de orquestación consumida directamente por app/main.py"""
     search_configs = []
     with conn.cursor() as cur:
         cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
