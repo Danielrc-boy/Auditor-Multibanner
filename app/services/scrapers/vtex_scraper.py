@@ -21,47 +21,41 @@ class VTEXScraper:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
             "Accept": "*/*",
             "Accept-Language": "es-CO,es;q=0.9",
-            "Referer": f"{self.base_url}/s?q=toallas+higienicas&sort=score_desc&page=0",
+            "Referer": f"{self.base_url}/",
         }
+
+    def _build_request(self, target_url: str, params_dict: dict = None):
+        """
+        Envía solicitudes a través de ScraperAPI asignando country_code=co
+        para evitar bloqueos geográficos/Cloudflare de VTEX.
+        """
+        if SCRAPERAPI_KEY:
+            # Construir la URL destino con sus parámetros originales
+            if params_dict:
+                query_string = urllib.parse.urlencode(params_dict)
+                full_target = f"{target_url}?{query_string}"
+            else:
+                full_target = target_url
+
+            # Parámetros para ScraperAPI
+            scraper_params = {
+                "api_key": SCRAPERAPI_KEY,
+                "url": full_target,
+                "country_code": "co",  # Geolocalización Colombia
+            }
+            return "http://api.scraperapi.com/", scraper_params
+
+        return target_url, params_dict
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        # Facets universales que incluyen Marketplace / Terceros
-        variables_payload = {
-            "first": limit,
-            "after": "0",
-            "sort": "score_desc",
-            "term": keyword,
-            "selectedFacets": [
-                {
-                    "key": "channel",
-                    "value": json.dumps({"salesChannel": "1", "regionId": ""})
-                },
-                {
-                    "key": "locale",
-                    "value": "es-CO"
-                }
-            ]
-        }
+        encoded_term = urllib.parse.quote(keyword)
 
-        variables_json = json.dumps(variables_payload)
-        encoded_variables = urllib.parse.quote(variables_json)
-        
-        gql_url = f"{self.base_url}/api/graphql?operationName=SearchQuery&variables={encoded_variables}"
-        request_url, params = self._build_request(gql_url, None)
-
-        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
-            try:
-                response = await client.get(request_url, headers=self.headers, params=params)
-                if response.status_code == 200:
-                    data = response.json()
-                    products = self._parse_graphql_response(data, keyword)
-                    if products:
-                        return products
-            except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] GraphQL SearchQuery falló: {e}", flush=True)
-
-            # Fallback REST Intelligent Search
-            is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{urllib.parse.quote(keyword)}"
+        async with httpx.AsyncClient(timeout=45.0, verify=False, follow_redirects=True) as client:
+            
+            # -----------------------------------------------------------------
+            # INTENTO 1: API REST Intelligent Search
+            # -----------------------------------------------------------------
+            is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{encoded_term}"
             is_params = {
                 "page": 1,
                 "count": limit,
@@ -77,21 +71,55 @@ class VTEXScraper:
                     data = response.json()
                     products_raw = data.get("products", []) if isinstance(data, dict) else []
                     if products_raw:
+                        results = self._parse_intelligent_search(products_raw, keyword, limit)
+                        if results:
+                            return results
+            except Exception as e:
+                print(f"[WARN {self.retailer.upper()}] REST Intelligent Search falló: {e}", flush=True)
+
+            # -----------------------------------------------------------------
+            # INTENTO 2: API GraphQL de VTEX
+            # -----------------------------------------------------------------
+            variables_payload = {
+                "first": limit,
+                "after": "0",
+                "sort": "score_desc",
+                "term": keyword,
+                "selectedFacets": [
+                    {"key": "channel", "value": json.dumps({"salesChannel": "1", "regionId": ""})},
+                    {"key": "locale", "value": "es-CO"}
+                ]
+            }
+            gql_url = f"{self.base_url}/api/graphql?operationName=SearchQuery&variables={urllib.parse.quote(json.dumps(variables_payload))}"
+            req_gql_url, req_gql_params = self._build_request(gql_url, None)
+
+            try:
+                response = await client.get(req_gql_url, headers=self.headers, params=req_gql_params)
+                if response.status_code == 200:
+                    data = response.json()
+                    products = self._parse_graphql_response(data, keyword)
+                    if products:
+                        return products
+            except Exception as e:
+                print(f"[WARN {self.retailer.upper()}] GraphQL SearchQuery falló: {e}", flush=True)
+
+            # -----------------------------------------------------------------
+            # INTENTO 3: API Legacy de Catálogo VTEX (Fallback ultra-estable)
+            # -----------------------------------------------------------------
+            legacy_url = f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_term}"
+            legacy_params = {"_from": 0, "_to": limit - 1}
+            req_leg_url, req_leg_params = self._build_request(legacy_url, legacy_params)
+
+            try:
+                response = await client.get(req_leg_url, headers=self.headers, params=req_leg_params)
+                if response.status_code in (200, 206):
+                    products_raw = response.json()
+                    if isinstance(products_raw, list) and len(products_raw) > 0:
                         return self._parse_intelligent_search(products_raw, keyword, limit)
             except Exception as e:
-                print(f"[ERROR {self.retailer.upper()}] REST Intelligent Search falló: {e}", flush=True)
+                print(f"[ERROR {self.retailer.upper()}] Legacy Search falló: {e}", flush=True)
 
         return []
-
-    def _build_request(self, target_url: str, params_dict: dict = None):
-        if SCRAPERAPI_KEY:
-            if params_dict:
-                query_string = "&".join([f"{k}={v}" for k, v in params_dict.items()])
-                full_target = f"{target_url}?{query_string}"
-            else:
-                full_target = target_url
-            return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": full_target}
-        return target_url, params_dict
 
     def _parse_graphql_response(self, data: dict, search_term: str) -> List[ExtractedProductData]:
         parsed = []
@@ -107,7 +135,6 @@ class VTEXScraper:
                 list_price = float(offer.get("listPrice", 0.0) or price)
                 discount_price = price if (0 < price < list_price) else None
 
-                # Extraer sellerName priorizando items -> sellers para Marketplace
                 items = node.get("items", [])
                 item_sellers = items[0].get("sellers", []) if items else []
                 seller_name = None
