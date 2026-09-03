@@ -80,7 +80,6 @@ def check_content_compliance() -> list[dict]:
             
         results = []
         for row in rows:
-            # Sombra RealDictCursor vs Tupla
             prod_name = row["product_name"]
             exp_desc = row["descripcion_esperada"]
             cap_desc = row["descripcion_capturada"]
@@ -142,18 +141,26 @@ def check_assortment_compliance() -> list[dict]:
         conn.close()
 
 
-# --- ENDPOINTS ANALYTICS CUMPLIMIENTO ---
+# --- ENDPOINTS CUMPLIMIENTO (AJUSTADOS A ESPECIFICACIÓN) ---
 
-@app.get("/analytics/content-compliance")
+@app.get("/content-compliance")
 def get_content_compliance():
     """Evalúa la coincidencia exacta de descripciones (normalizadas) capturadas vs esperadas."""
-    return check_content_compliance()
+    try:
+        data = check_content_compliance()
+        return {"status": "success", "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/analytics/assortment-compliance")
+@app.get("/assortment-compliance")
 def get_assortment_compliance():
     """Evalúa la presencia o ausencia de productos obligatorios en cada retailer."""
-    return check_assortment_compliance()
+    try:
+        data = check_assortment_compliance()
+        return {"status": "success", "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # --- OPERACIONES BASE DE DATOS ---
