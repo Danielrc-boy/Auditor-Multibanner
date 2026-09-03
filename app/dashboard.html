@@ -424,35 +424,41 @@
         }
 
         async function loadFilterOptions() {
-            try {
-                const res = await fetch(`${API_BASE}/analytics/options`);
-                const data = await res.json();
-                
-                const brandSelect = document.getElementById('selectBrand');
-                if (brandSelect.children.length <= 1) {
-                    data.brands.forEach(b => {
-                        const opt = document.createElement('option');
-                        opt.value = b;
-                        opt.innerText = b;
-                        brandSelect.appendChild(opt);
-                    });
-                }
+    try {
+        // 1. Obtenemos los filtros activos de la parte superior del Dashboard
+        const retailer = document.getElementById('filterRetailer') ? document.getElementById('filterRetailer').value : 'ALL';
+        const term = document.getElementById('filterTerm') ? document.getElementById('filterTerm').value : 'ALL';
 
-                const prodSelect = document.getElementById('selectProduct');
-                if (prodSelect.children.length <= 1) {
-                    data.products.forEach(p => {
-                        const opt = document.createElement('option');
-                        opt.value = p;
-                        opt.innerText = p.length > 50 ? p.substring(0, 50) + '...' : p;
-                        prodSelect.appendChild(opt);
-                    });
-                }
+        // 2. Enviamos los parámetros al backend
+        const res = await fetch(`${API_BASE}/analytics/options?retailer=${encodeURIComponent(retailer)}&search_term=${encodeURIComponent(term)}`);
+        const data = await res.json();
+        
+        // 3. Limpiamos y repoblamos el selector de marcas
+        const brandSelect = document.getElementById('selectBrand');
+        brandSelect.innerHTML = '<option value="ALL">Todas las Marcas</option>';
+        data.brands.forEach(b => {
+            const opt = document.createElement('option');
+            opt.value = b;
+            opt.innerText = b;
+            brandSelect.appendChild(opt);
+        });
 
-                populateProductCompareSelects(data.products);
-            } catch (err) {
-                console.error("Error cargando opciones de filtro:", err);
-            }
-        }
+        // 4. Limpiamos y repoblamos el selector de productos
+        const prodSelect = document.getElementById('selectProduct');
+        prodSelect.innerHTML = '<option value="ALL">Todas las Referencias</option>';
+        data.products.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p;
+            opt.innerText = p.length > 50 ? p.substring(0, 50) + '...' : p;
+            prodSelect.appendChild(opt);
+        });
+
+        // 5. Actualizamos los desplegables de la comparativa Head-to-Head
+        populateProductCompareSelects(data.products);
+    } catch (err) {
+        console.error("Error cargando opciones de filtro:", err);
+    }
+}
 
         function populateProductCompareSelects(products) {
             const selA = document.getElementById('compareProdA');

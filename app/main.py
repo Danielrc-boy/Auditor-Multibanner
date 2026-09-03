@@ -434,20 +434,25 @@ def clean_database(confirm: bool = Query(False)):
 
 # --- ENDPOINT PARA OBTENER OPCIONES DE FILTROS (MARCAS Y PRODUCTOS) ---
 @app.get("/analytics/options")
-def get_filter_options():
-    """Retorna las listas distintas de marcas y productos para los selectores frontend."""
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT COALESCE(brand, 'Sin Marca') as brand FROM scraper_results WHERE brand IS NOT NULL ORDER BY brand ASC;")
-            brands = [r["brand"] for r in cur.fetchall()]
+def get_analytics_options(
+    retailer: str = "ALL",
+    search_term: str = "ALL",
+    db: Session = Depends(get_db)
+):
+    query = db.query(ProductPosition)
 
-            cur.execute("SELECT DISTINCT product_name FROM scraper_results WHERE product_name IS NOT NULL ORDER BY product_name ASC;")
-            products = [r["product_name"] for r in cur.fetchall()]
+    if retailer != "ALL":
+        query = query.filter(ProductPosition.retailer == retailer)
+    if search_term != "ALL":
+        query = query.filter(ProductPosition.search_term == search_term)
 
-            return {"brands": brands, "products": products}
-    finally:
-        conn.close()
+    brands = [b[0] for b in query.select_from(ProductPosition).distinct(ProductPosition.brand).values(ProductPosition.brand) if b[0]]
+    products = [p[0] for p in query.select_from(ProductPosition).distinct(ProductPosition.product_name).values(ProductPosition.product_name) if p[0]]
+
+    return {
+        "brands": sorted(brands),
+        "products": sorted(products)
+    }
 
 
 # --- ENDPOINT ANALYTICS: TABLA DE POSICIONES DEDUPLICADA ---
