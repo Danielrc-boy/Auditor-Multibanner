@@ -46,7 +46,7 @@ def get_db_connection():
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
 
-# --- FUNCIONES DE CUMPLIMIENTO (FASE 3) ---
+# --- FUNCIONES DE CUMPLIMIENTO CON FILTRO DINÁMICO DE RETAILER ---
 
 def normalize_text(text: str) -> str:
     """
@@ -61,8 +61,15 @@ def normalize_text(text: str) -> str:
     return ' '.join(text.split())
 
 
-def check_content_compliance() -> list[dict]:
-    query = """
+def check_content_compliance(retailer: Optional[str] = None) -> list[dict]:
+    where_clause = ""
+    params = []
+
+    if retailer and retailer.upper() != "ALL":
+        where_clause = " WHERE sr.retailer ILIKE %s "
+        params.append(f"%{retailer}%")
+
+    query = f"""
         SELECT DISTINCT ON (ed.product_name)
             ed.product_name,
             ed.descripcion_esperada,
@@ -70,12 +77,13 @@ def check_content_compliance() -> list[dict]:
         FROM expected_descriptions ed
         LEFT JOIN scraper_results sr 
             ON LOWER(TRIM(ed.product_name)) = LOWER(TRIM(sr.product_name))
+        {where_clause}
         ORDER BY ed.product_name, sr.captured_at DESC;
     """
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(query)
+            cursor.execute(query, tuple(params))
             rows = cursor.fetchall()
             
         results = []
@@ -100,8 +108,15 @@ def check_content_compliance() -> list[dict]:
         conn.close()
 
 
-def check_assortment_compliance() -> list[dict]:
-    query = """
+def check_assortment_compliance(retailer: Optional[str] = None) -> list[dict]:
+    where_clause = " WHERE ra.obligatorio = TRUE "
+    params = []
+
+    if retailer and retailer.upper() != "ALL":
+        where_clause += " AND ra.retailer ILIKE %s "
+        params.append(f"%{retailer}%")
+
+    query = f"""
         WITH latest_captures AS (
             SELECT DISTINCT ON (retailer, product_name)
                 retailer,
@@ -121,12 +136,12 @@ def check_assortment_compliance() -> list[dict]:
         LEFT JOIN latest_captures lc 
             ON LOWER(TRIM(ra.retailer)) = LOWER(TRIM(lc.retailer))
            AND LOWER(TRIM(ra.product_name)) = LOWER(TRIM(lc.product_name))
-        WHERE ra.obligatorio = TRUE;
+        {where_clause};
     """
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(query)
+            cursor.execute(query, tuple(params))
             rows = cursor.fetchall()
             
         return [
@@ -141,23 +156,23 @@ def check_assortment_compliance() -> list[dict]:
         conn.close()
 
 
-# --- ENDPOINTS CUMPLIMIENTO (AJUSTADOS A ESPECIFICACIÓN) ---
+# --- ENDPOINTS CUMPLIMIENTO CON PARÁMETRO OPCIONAL ---
 
 @app.get("/content-compliance")
-def get_content_compliance():
+def get_content_compliance(retailer: Optional[str] = Query(None)):
     """Evalúa la coincidencia exacta de descripciones (normalizadas) capturadas vs esperadas."""
     try:
-        data = check_content_compliance()
+        data = check_content_compliance(retailer=retailer)
         return {"status": "success", "data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/assortment-compliance")
-def get_assortment_compliance():
+def get_assortment_compliance(retailer: Optional[str] = Query(None)):
     """Evalúa la presencia o ausencia de productos obligatorios en cada retailer."""
     try:
-        data = check_assortment_compliance()
+        data = check_assortment_compliance(retailer=retailer)
         return {"status": "success", "data": data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

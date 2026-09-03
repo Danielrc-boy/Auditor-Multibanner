@@ -58,7 +58,7 @@
             <div class="flex flex-wrap gap-3 items-center w-full md:w-auto">
                 <div>
                     <label class="block text-[10px] text-slate-400 uppercase font-bold mb-1">Retailer</label>
-                    <select id="filterRetailer" onchange="loadDashboardData()" class="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:ring-indigo-500">
+                    <select id="filterRetailer" onchange="onRetailerChange()" class="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:ring-indigo-500">
                         <option value="ALL">Todos los Retailers</option>
                     </select>
                 </div>
@@ -92,7 +92,7 @@
             </div>
         </div>
 
-        <!-- NUEVA SECCIÓN: CUMPLIMIENTO Y REQUISITOS -->
+        <!-- SECCIÓN: CUMPLIMIENTO Y REQUISITOS -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <!-- Widget 1: Cumplimiento de Descripción -->
             <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
@@ -264,6 +264,19 @@
     <script>
         const API_BASE = window.location.origin;
 
+        // Función auxiliar para obtener el retailer seleccionado
+        function getSelectedRetailer() {
+            const select = document.getElementById("filterRetailer");
+            return (select && select.value !== "ALL") ? select.value : "";
+        }
+
+        // Manejador del cambio de retailer para re-cargar todos los componentes dinámicos
+        function onRetailerChange() {
+            loadDashboardData();
+            loadContentCompliance();
+            loadAssortmentCompliance();
+        }
+
         async function uploadExcel(event) {
             event.preventDefault();
             const fileInput = document.getElementById('excelFile');
@@ -300,7 +313,12 @@
 
         async function loadContentCompliance() {
             try {
-                const res = await fetch(`${API_BASE}/content-compliance`);
+                const retailer = getSelectedRetailer();
+                const url = retailer 
+                    ? `${API_BASE}/content-compliance?retailer=${encodeURIComponent(retailer)}` 
+                    : `${API_BASE}/content-compliance`;
+
+                const res = await fetch(url);
                 const result = await res.json();
                 const items = result.data || [];
                 const tbody = document.getElementById('tblContentCompliance');
@@ -310,7 +328,11 @@
                     return;
                 }
 
-                tbody.innerHTML = items.map((item, idx) => `
+                tbody.innerHTML = items.map((item, idx) => {
+                    // Mantenemos referencia global si es necesaria
+                    window[`desc_item_${idx}`] = item;
+                    
+                    return `
                     <tr class="hover:bg-slate-800/30 transition">
                         <td class="p-3 font-medium text-slate-200 max-w-xs truncate" title="${item.product_name}">${item.product_name}</td>
                         <td class="p-3">
@@ -324,8 +346,8 @@
                                 Ver Detalle
                             </button>
                         </td>
-                    </tr>
-                `).join('');
+                    </tr>`;
+                }).join('');
             } catch (err) {
                 console.error("Error cargando cumplimiento de contenido:", err);
             }
@@ -333,7 +355,12 @@
 
         async function loadAssortmentCompliance() {
             try {
-                const res = await fetch(`${API_BASE}/assortment-compliance`);
+                const retailer = getSelectedRetailer();
+                const url = retailer 
+                    ? `${API_BASE}/assortment-compliance?retailer=${encodeURIComponent(retailer)}` 
+                    : `${API_BASE}/assortment-compliance`;
+
+                const res = await fetch(url);
                 const result = await res.json();
                 const items = result.data || [];
                 const tbody = document.getElementById('tblAssortmentCompliance');
