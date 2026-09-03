@@ -8,6 +8,7 @@ class ExtractedProductData(BaseModel):
     search_position: int
     title: str
     brand: Optional[str] = "Sin Marca"
+    description: Optional[str] = None
     base_price: float
     discount_price: Optional[float] = None
     in_stock: bool = True

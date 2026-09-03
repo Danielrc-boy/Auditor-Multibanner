@@ -154,6 +154,13 @@ class FarmatodoScraper:
                 final_brand = self._extract_brand(item, title)
                 base_price, discount_price = self._extract_prices(item)
 
+                # Extracción de descripción en Algolia/Farmatodo
+                description = (
+                    item.get("description") or
+                    item.get("long_description") or
+                    item.get("meta_description")
+                )
+
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
@@ -162,6 +169,7 @@ class FarmatodoScraper:
                     search_position=valid_position,
                     title=title,
                     brand=final_brand,
+                    description=description,
                     base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock

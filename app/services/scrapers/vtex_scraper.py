@@ -107,6 +107,9 @@ class VTEXScraper:
                 list_price = float(offer.get("listPrice", 0.0) or price)
                 discount_price = price if (0 < price < list_price) else None
 
+                # Extraer descripción
+                description = node.get("description") or node.get("metaTagDescription") or node.get("metaText")
+
                 # Extraer sellerName priorizando items -> sellers para Marketplace
                 items = node.get("items", [])
                 item_sellers = items[0].get("sellers", []) if items else []
@@ -127,6 +130,7 @@ class VTEXScraper:
                     search_position=idx,
                     title=node.get("name", "Sin título"),
                     brand=node.get("brand", {}).get("name", "Sin Marca") if isinstance(node.get("brand"), dict) else "Sin Marca",
+                    description=description,
                     base_price=list_price,
                     discount_price=discount_price,
                     in_stock="InStock" in str(offer.get("availability", "")),
@@ -151,6 +155,9 @@ class VTEXScraper:
                 discount_price = price if (0 < price < base_price) else None
                 in_stock = prod.get("isAvailable", True) if "isAvailable" in prod else (comm.get("AvailableQuantity", 0) > 0)
 
+                # Extraer descripción
+                description = prod.get("description") or prod.get("metaTagDescription") or prod.get("metaText")
+
                 seller_name = seller_obj.get("sellerName") if isinstance(seller_obj, dict) else None
                 if not seller_name or str(seller_name).strip() == "":
                     seller_name = self.default_seller
@@ -160,6 +167,7 @@ class VTEXScraper:
                     search_position=idx,
                     title=prod.get("productName") or prod.get("name") or "Sin título",
                     brand=prod.get("brand") or prod.get("brandName") or "Sin Marca",
+                    description=description,
                     base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock,
