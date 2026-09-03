@@ -66,7 +66,7 @@ def check_content_compliance(retailer: Optional[str] = None) -> list[dict]:
     params = []
 
     if retailer and retailer.upper() != "ALL":
-        where_clause = " WHERE sr.retailer ILIKE %s "
+        where_clause = " WHERE (sr.retailer ILIKE %s OR sr.retailer IS NULL) "
         params.append(f"%{retailer}%")
 
     query = f"""
@@ -76,7 +76,8 @@ def check_content_compliance(retailer: Optional[str] = None) -> list[dict]:
             sr.description AS descripcion_capturada
         FROM expected_descriptions ed
         LEFT JOIN scraper_results sr 
-            ON LOWER(TRIM(ed.product_name)) = LOWER(TRIM(sr.product_name))
+            ON sr.product_name ILIKE '%' || ed.product_name || '%' 
+            OR ed.product_name ILIKE '%' || sr.product_name || '%'
         {where_clause}
         ORDER BY ed.product_name, sr.captured_at DESC;
     """
@@ -100,7 +101,7 @@ def check_content_compliance(retailer: Optional[str] = None) -> list[dict]:
             results.append({
                 "product_name": prod_name,
                 "descripcion_esperada": exp_desc,
-                "descripcion_capturada": cap_desc or "",
+                "descripcion_capturada": cap_desc or "No capturado",
                 "estado": "Cumple" if cumple else "No cumple"
             })
         return results
@@ -135,7 +136,7 @@ def check_assortment_compliance(retailer: Optional[str] = None) -> list[dict]:
         FROM required_assortment ra
         LEFT JOIN latest_captures lc 
             ON LOWER(TRIM(ra.retailer)) = LOWER(TRIM(lc.retailer))
-           AND LOWER(TRIM(ra.product_name)) = LOWER(TRIM(lc.product_name))
+           AND (lc.product_name ILIKE '%' || ra.product_name || '%' OR ra.product_name ILIKE '%' || lc.product_name || '%')
         {where_clause};
     """
     conn = get_db_connection()
@@ -539,7 +540,7 @@ def compare_products(
     product_b: str = Query(..., description="Nombre exacto de la referencia B (Comparación)"),
     retailer: Optional[str] = Query(None)
 ):
-    """Compara métricas y calcula diferenciales entre dos referencias de productos específicas."""
+    """Compara métricas y calcula differentials entre dos referencias de productos específicas."""
     conn = get_db_connection()
     try:
         where_clause = " WHERE product_name ILIKE %s"
