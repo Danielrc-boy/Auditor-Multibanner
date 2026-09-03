@@ -1,15 +1,12 @@
-from __future__ import annotations
 import os
 import io
-import unicodedata
-from io import BytesIO
-from uuid import UUID
+from uuid import UUID  # <-- IMPORTANTE: Resuelve el 'NameError: name UUID is not defined'
 from typing import Optional, List
 from datetime import datetime
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Depends
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -46,197 +43,18 @@ def get_db_connection():
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
 
-# --- FUNCIONES DE CUMPLIMIENTO CON FILTRO DINÁMICO DE RETAILER ---
-
-def normalize_text(text: str) -> str:
-    """
-    Normaliza el texto: minúsculas, elimina tildes/acentos 
-    y limpia espacios en blanco adicionales.
-    """
-    if not text:
-        return ""
-    text = text.lower()
-    text = unicodedata.normalize('NFD', text)
-    text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
-    return ' '.join(text.split())
-
-
-def check_content_compliance(retailer: Optional[str] = None) -> list[dict]:
-    where_clause = ""
-    params = []
-
-    if retailer and retailer.upper() != "ALL":
-        where_clause = " WHERE (sr.retailer ILIKE %s OR sr.retailer IS NULL) "
-        params.append(f"%{retailer}%")
-
-    query = f"""
-        SELECT DISTINCT ON (ed.product_name)
-            ed.product_name,
-            ed.descripcion_esperada,
-            sr.description AS descripcion_capturada
-        FROM expected_descriptions ed
-        LEFT JOIN scraper_results sr 
-            ON sr.product_name ILIKE '%' || ed.product_name || '%' 
-            OR ed.product_name ILIKE '%' || sr.product_name || '%'
-        {where_clause}
-        ORDER BY ed.product_name, sr.captured_at DESC;
-    """
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(query, tuple(params))
-            rows = cursor.fetchall()
-            
-        results = []
-        for row in rows:
-            prod_name = row["product_name"]
-            exp_desc = row["descripcion_esperada"]
-            cap_desc = row["descripcion_capturada"]
-
-            norm_exp = normalize_text(exp_desc)
-            norm_cap = normalize_text(cap_desc)
-            
-            cumple = (norm_exp == norm_cap) if norm_cap else False
-            
-            results.append({
-                "product_name": prod_name,
-                "descripcion_esperada": exp_desc,
-                "descripcion_capturada": cap_desc or "No capturado",
-                "estado": "Cumple" if cumple else "No cumple"
-            })
-        return results
-    finally:
-        conn.close()
-
-
-def check_assortment_compliance(retailer: Optional[str] = None) -> list[dict]:
-    where_clause = " WHERE ra.obligatorio = TRUE "
-    params = []
-
-    if retailer and retailer.upper() != "ALL":
-        where_clause += " AND ra.retailer ILIKE %s "
-        params.append(f"%{retailer}%")
-
-    query = f"""
-        WITH latest_captures AS (
-            SELECT DISTINCT ON (retailer, product_name)
-                retailer,
-                product_name,
-                captured_at
-            FROM scraper_results
-            ORDER BY retailer, product_name, captured_at DESC
-        )
-        SELECT 
-            ra.retailer,
-            ra.product_name,
-            CASE 
-                WHEN lc.product_name IS NOT NULL THEN 'Presente'
-                ELSE 'Faltante'
-            END AS estado
-        FROM required_assortment ra
-        LEFT JOIN latest_captures lc 
-            ON LOWER(TRIM(ra.retailer)) = LOWER(TRIM(lc.retailer))
-           AND (lc.product_name ILIKE '%' || ra.product_name || '%' OR ra.product_name ILIKE '%' || lc.product_name || '%')
-        {where_clause};
-    """
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(query, tuple(params))
-            rows = cursor.fetchall()
-            
-        return [
-            {
-                "retailer": row["retailer"],
-                "product_name": row["product_name"],
-                "estado": row["estado"]
-            }
-            for row in rows
-        ]
-    finally:
-        conn.close()
-
-
-# --- ENDPOINTS CUMPLIMIENTO CON PARÁMETRO OPCIONAL ---
-
-@app.get("/content-compliance")
-def get_content_compliance(retailer: Optional[str] = Query(None)):
-    """Evalúa la coincidencia exacta de descripciones (normalizadas) capturadas vs esperadas."""
-    try:
-        data = check_content_compliance(retailer=retailer)
-        return {"status": "success", "data": data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/assortment-compliance")
-def get_assortment_compliance(retailer: Optional[str] = Query(None)):
-    """Evalúa la presencia o ausencia de productos obligatorios en cada retailer."""
-    try:
-        data = check_assortment_compliance(retailer=retailer)
-        return {"status": "success", "data": data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# --- OPERACIONES BASE DE DATOS ---
-
-def update_expected_descriptions(records: list[dict]):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("TRUNCATE TABLE expected_descriptions;")
-            query = """
-                INSERT INTO expected_descriptions (product_name, descripcion_esperada)
-                VALUES (%s, %s)
-            """
-            cursor.executemany(
-                query,
-                [(r["product_name"], r["descripcion_esperada"]) for r in records]
-            )
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Error actualizando descripciones esperadas: {str(e)}")
-    finally:
-        conn.close()
-
-
-def update_required_assortment(records: list[dict]):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("TRUNCATE TABLE required_assortment;")
-            query = """
-                INSERT INTO required_assortment (retailer, product_name, obligatorio)
-                VALUES (%s, %s, %s)
-            """
-            cursor.executemany(
-                query,
-                [(r["retailer"], r["product_name"], r["obligatorio"]) for r in records]
-            )
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Error actualizando surtido obligatorio: {str(e)}")
-    finally:
-        conn.close()
-
-
 def save_scraper_results(conn, results: list, retailer: str) -> int:
     if not results:
         return 0
-    
     insert_query = """
         INSERT INTO scraper_results (
             retailer, search_term, product_name, brand, position,
-            price, discount_price, is_available, seller_name, description
+            price, discount_price, is_available
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
     """
     saved_count = 0
     formatted_retailer = retailer.capitalize() if retailer else "Unknown"
-    
     with conn.cursor() as cur:
         for item in results:
             try:
@@ -247,10 +65,6 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                 base_price = getattr(item, "base_price", 0.0)
                 disc_price = getattr(item, "discount_price", None)
                 stock = getattr(item, "in_stock", True)
-                description = getattr(item, "description", None)
-                
-                seller_name = getattr(item, "seller_name", None) or getattr(item, "seller", None) or formatted_retailer
-                
                 cur.execute(
                     insert_query,
                     (
@@ -262,8 +76,6 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                         base_price,
                         disc_price,
                         stock,
-                        seller_name,
-                        description,
                     ),
                 )
                 saved_count += 1
@@ -355,382 +167,6 @@ class SearchConfigCreate(BaseModel):
 @app.get("/")
 def read_root():
     return {"message": "API Monitoreo Activa"}
-
-
-# --- ENDPOINT ADMIN: CARGA DE ARCHIVOS EXCEL (REQUISITOS Y PORTAFOLIO) ---
-@app.post("/admin/upload-requirements")
-async def upload_requirements(file: UploadFile = File(...)):
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="El archivo debe ser un Excel (.xlsx o .xls)")
-
-    contents = await file.read()
-    excel_file = BytesIO(contents)
-
-    try:
-        # Lectura de la hoja Descripciones
-        df_desc = pd.read_excel(excel_file, sheet_name="Descripciones")
-        df_desc.columns = df_desc.columns.str.strip().str.lower()
-        required_cols_desc = {"product_name", "descripcion_esperada"}
-        if not required_cols_desc.issubset(df_desc.columns):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"La hoja 'Descripciones' debe contener las columnas: {required_cols_desc}"
-            )
-        
-        # Lectura de la hoja Portafolio
-        excel_file.seek(0)
-        df_port = pd.read_excel(excel_file, sheet_name="Portafolio")
-        df_port.columns = df_port.columns.str.strip().str.lower()
-        required_cols_port = {"retailer", "product_name", "obligatorio"}
-        if not required_cols_port.issubset(df_port.columns):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"La hoja 'Portafolio' debe contener las columnas: {required_cols_port}"
-            )
-
-        # Reemplazo en Base de Datos
-        desc_records = df_desc[["product_name", "descripcion_esperada"]].to_dict(orient="records")
-        port_records = df_port[["retailer", "product_name", "obligatorio"]].to_dict(orient="records")
-
-        update_expected_descriptions(desc_records)
-        update_required_assortment(port_records)
-
-        return {
-            "status": "success",
-            "message": "Tablas actualizadas correctamente",
-            "descripciones_procesadas": len(desc_records),
-            "portafolio_procesado": len(port_records)
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al procesar el archivo: {str(e)}")
-
-
-# --- ENDPOINT ADMIN: LIMPIEZA DE BASE DE DATOS ---
-@app.delete("/admin/clean-db")
-def clean_database(confirm: bool = Query(False)):
-    """Elimina todos los registros de scraper_results para reiniciar la captura."""
-    if not confirm:
-        raise HTTPException(
-            status_code=400, 
-            detail="Se requiere el parámetro ?confirm=true para ejecutar la limpieza."
-        )
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("TRUNCATE TABLE scraper_results RESTART IDENTITY;")
-            conn.commit()
-            return {
-                "status": "success",
-                "message": "Base de datos truncada correctamente."
-            }
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Error al limpiar BD: {str(e)}")
-    finally:
-        conn.close()
-
-
-# --- ENDPOINT PARA OBTENER OPCIONES DE FILTROS (MARCAS Y PRODUCTOS) ---
-@app.get("/analytics/options")
-def get_analytics_options(
-    retailer: str = "ALL",
-    search_term: str = "ALL"
-):
-    """Obtiene listas de marcas y productos filtrados dinámicamente según la BD PostgreSQL."""
-    conn = get_db_connection()
-    try:
-        where_clause = " WHERE 1=1"
-        params = []
-
-        if retailer and retailer != "ALL":
-            where_clause += " AND retailer ILIKE %s"
-            params.append(f"%{retailer}%")
-        if search_term and search_term != "ALL":
-            where_clause += " AND search_term ILIKE %s"
-            params.append(f"%{search_term}%")
-
-        with conn.cursor() as cur:
-            # Consulta de marcas distintas
-            sql_brands = f"SELECT DISTINCT COALESCE(brand, 'Sin Marca') as brand FROM scraper_results {where_clause} ORDER BY brand;"
-            cur.execute(sql_brands, tuple(params))
-            brands_rows = cur.fetchall()
-            brands = [r["brand"] for r in brands_rows if r["brand"]]
-
-            # Consulta de productos distintos
-            sql_products = f"SELECT DISTINCT product_name FROM scraper_results {where_clause} WHERE product_name IS NOT NULL ORDER BY product_name;"
-            cur.execute(sql_products, tuple(params))
-            products_rows = cur.fetchall()
-            products = [r["product_name"] for r in products_rows if r["product_name"]]
-
-        return {
-            "brands": brands,
-            "products": products
-        }
-    finally:
-        conn.close()
-
-
-# --- ENDPOINT ANALYTICS: TABLA DE POSICIONES DEDUPLICADA ---
-@app.get("/analytics/positions")
-def get_positions(
-    retailer: Optional[str] = Query(None),
-    brand: Optional[str] = Query(None),
-    product_name: Optional[str] = Query(None),
-    search_term: Optional[str] = Query(None),
-    query: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=500)
-):
-    """Obtiene el ranking de posicionamiento deduplicado indicando número de permanencias."""
-    conn = get_db_connection()
-    try:
-        where_clause = " WHERE 1=1"
-        params = []
-        if retailer and retailer != "ALL":
-            where_clause += " AND retailer ILIKE %s"
-            params.append(f"%{retailer}%")
-        if brand and brand != "ALL":
-            where_clause += " AND brand ILIKE %s"
-            params.append(f"%{brand}%")
-        if product_name and product_name != "ALL":
-            where_clause += " AND product_name ILIKE %s"
-            params.append(f"%{product_name}%")
-        if search_term and search_term != "ALL":
-            where_clause += " AND search_term ILIKE %s"
-            params.append(f"%{search_term}%")
-        if query:
-            where_clause += " AND product_name ILIKE %s"
-            params.append(f"%{query}%")
-
-        sql = f"""
-            SELECT 
-                retailer,
-                search_term,
-                product_name,
-                COALESCE(brand, 'Sin Marca') as brand,
-                position,
-                price,
-                discount_price,
-                is_available,
-                description,
-                COALESCE(seller_name, retailer) as seller_name,
-                COUNT(*) as run_count,
-                MIN(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as first_seen,
-                MAX(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as last_seen
-            FROM scraper_results
-            {where_clause}
-            GROUP BY retailer, search_term, product_name, brand, position, price, discount_price, is_available, description, seller_name
-            ORDER BY last_seen DESC, position ASC
-            LIMIT %s;
-        """
-        params.append(limit)
-        with conn.cursor() as cur:
-            cur.execute(sql, tuple(params))
-            return cur.fetchall()
-    finally:
-        conn.close()
-
-
-# --- ENDPOINT ANALYTICS: COMPARADOR HEAD-TO-HEAD DE PRODUCTOS / REFERENCIAS ---
-@app.get("/analytics/compare-products")
-def compare_products(
-    product_a: str = Query(..., description="Nombre exacto de la referencia A (Base)"),
-    product_b: str = Query(..., description="Nombre exacto de la referencia B (Comparación)"),
-    retailer: Optional[str] = Query(None)
-):
-    """Compara métricas y calcula differentials entre dos referencias de productos específicas."""
-    conn = get_db_connection()
-    try:
-        where_clause = " WHERE product_name ILIKE %s"
-        params_a = [f"%{product_a}%"]
-        params_b = [f"%{product_b}%"]
-
-        if retailer and retailer != "ALL":
-            where_clause += " AND retailer ILIKE %s"
-            params_a.append(f"%{retailer}%")
-            params_b.append(f"%{retailer}%")
-
-        query_sql = f"""
-            SELECT 
-                product_name,
-                COALESCE(brand, 'Sin Marca') as brand,
-                COUNT(*) as total_skus,
-                ROUND(AVG(position)::numeric, 1) as avg_position,
-                ROUND(AVG(price)::numeric, 0) as avg_price,
-                ROUND(AVG(CASE WHEN discount_price > 0 AND discount_price < price THEN discount_price ELSE price END)::numeric, 0) as avg_final_price,
-                COUNT(CASE WHEN is_available = FALSE THEN 1 END) as oos_skus
-            FROM scraper_results
-            {where_clause}
-            GROUP BY product_name, COALESCE(brand, 'Sin Marca');
-        """
-        with conn.cursor() as cur:
-            cur.execute(query_sql, tuple(params_a))
-            res_a = cur.fetchone() or {}
-            cur.execute(query_sql, tuple(params_b))
-            res_b = cur.fetchone() or {}
-
-        price_a = float(res_a.get("avg_final_price") or 0)
-        price_b = float(res_b.get("avg_final_price") or 0)
-        price_diff = price_b - price_a
-        price_pct = ((price_b - price_a) / price_a * 100) if price_a > 0 else 0
-
-        pos_a = float(res_a.get("avg_position") or 0)
-        pos_b = float(res_b.get("avg_position") or 0)
-        pos_diff = pos_b - pos_a
-
-        return {
-            "product_a": res_a,
-            "product_b": res_b,
-            "differentials": {
-                "price_diff": price_diff,
-                "price_pct": round(price_pct, 1),
-                "is_b_cheaper": price_diff < 0,
-                "pos_diff": round(pos_diff, 1),
-                "is_b_better_positioned": pos_diff < 0
-            }
-        }
-    finally:
-        conn.close()
-
-
-# --- ENDPOINT DE DATOS DEL DASHBOARD POTENCIADO Y FILTRABLE ---
-@app.get("/dashboard-data")
-@app.get("/dashboard-data/")
-def get_dashboard_data(
-    retailer: Optional[str] = Query(None),
-    search_term: Optional[str] = Query(None),
-    date_from: Optional[datetime] = Query(None),
-    date_to: Optional[datetime] = Query(None),
-):
-    """Consolida métricas y cruces comerciales avanzados con soporte para filtros dinámicos."""
-    conn = get_db_connection()
-    try:
-        base_where = " WHERE 1=1"
-        params = []
-
-        if retailer and retailer != "ALL":
-            base_where += " AND retailer ILIKE %s"
-            params.append(f"%{retailer}%")
-        if search_term and search_term != "ALL":
-            base_where += " AND search_term ILIKE %s"
-            params.append(f"%{search_term}%")
-        if date_from:
-            base_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date >= %s::date"
-            params.append(date_from)
-        if date_to:
-            base_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
-            params.append(date_to)
-
-        with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT retailer FROM scraper_results WHERE retailer IS NOT NULL ORDER BY retailer;")
-            available_retailers = [r["retailer"].capitalize() for r in cur.fetchall()]
-
-            cur.execute("SELECT DISTINCT search_term FROM scraper_results WHERE search_term IS NOT NULL ORDER BY search_term;")
-            available_terms = [r["search_term"] for r in cur.fetchall()]
-
-            cur.execute(f"""
-                SELECT 
-                    COUNT(*) as total_monitored,
-                    COUNT(CASE WHEN is_available = FALSE THEN 1 END) as out_of_stock_count,
-                    COUNT(DISTINCT retailer) as active_retailers,
-                    COUNT(CASE WHEN discount_price > 0 AND discount_price < price THEN 1 END) as discounted_count,
-                    ROUND(AVG(CASE WHEN discount_price > 0 AND discount_price < price THEN ((price - discount_price) / price) * 100 ELSE 0 END)::numeric, 1) as avg_discount_pct
-                FROM scraper_results
-                {base_where};
-            """, tuple(params))
-            summary_row = cur.fetchone()
-
-            total = summary_row["total_monitored"] if summary_row and summary_row["total_monitored"] else 0
-            stock_out = summary_row["out_of_stock_count"] if summary_row and summary_row["out_of_stock_count"] else 0
-            availability = round(((total - stock_out) / total) * 100, 1) if total > 0 else 100.0
-
-            cur.execute(f"""
-                SELECT 
-                    retailer,
-                    COUNT(CASE WHEN LOWER(brand) IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') THEN 1 END) as essity_total,
-                    COUNT(CASE WHEN LOWER(brand) NOT IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') OR brand IS NULL THEN 1 END) as comp_total,
-                    COUNT(CASE WHEN LOWER(brand) IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') AND position <= 10 THEN 1 END) as essity_top10,
-                    COUNT(CASE WHEN (LOWER(brand) NOT IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') OR brand IS NULL) AND position <= 10 THEN 1 END) as comp_top10
-                FROM scraper_results
-                {base_where}
-                GROUP BY retailer;
-            """, tuple(params))
-            sos_rows = cur.fetchall()
-
-            cur.execute(f"""
-                SELECT 
-                    TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD') as date_label,
-                    ROUND(AVG(CASE WHEN LOWER(brand) IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') THEN price END)::numeric, 0) as essity_price,
-                    ROUND(AVG(CASE WHEN LOWER(brand) NOT IN ('nosotras', 'pequeñin', 'pequeñín', 'tena', 'zewa') OR brand IS NULL THEN price END)::numeric, 0) as comp_price
-                FROM scraper_results
-                {base_where} AND price > 0
-                GROUP BY TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD')
-                ORDER BY date_label ASC;
-            """, tuple(params))
-            price_rows = cur.fetchall()
-
-            cur.execute(f"""
-                SELECT 
-                    COALESCE(brand, 'Sin Marca') as brand_name,
-                    COUNT(*) as total_skus,
-                    COUNT(CASE WHEN is_available = FALSE THEN 1 END) as oos_skus,
-                    ROUND(AVG(price)::numeric, 0) as avg_price
-                FROM scraper_results
-                {base_where}
-                GROUP BY COALESCE(brand, 'Sin Marca')
-                ORDER BY total_skus DESC
-                LIMIT 7;
-            """, tuple(params))
-            brand_rows = cur.fetchall()
-
-        return {
-            "filters": {
-                "retailers": available_retailers,
-                "search_terms": available_terms
-            },
-            "summary": {
-                "total_monitored": total,
-                "availability_rate": availability,
-                "out_of_stock_alerts": stock_out,
-                "active_retailers": summary_row["active_retailers"] if summary_row else 0,
-                "discounted_count": summary_row["discounted_count"] if summary_row else 0,
-                "avg_discount_pct": float(summary_row["avg_discount_pct"]) if summary_row and summary_row["avg_discount_pct"] else 0.0
-            },
-            "share_of_shelf": {
-                "retailers": [r["retailer"].capitalize() for r in sos_rows],
-                "essity": [r["essity_total"] for r in sos_rows],
-                "competencia": [r["comp_total"] for r in sos_rows],
-                "essity_top10": [r["essity_top10"] for r in sos_rows],
-                "competencia_top10": [r["comp_top10"] for r in sos_rows]
-            },
-            "price_evolution": {
-                "labels": [p["date_label"] for p in price_rows],
-                "essity_prices": [float(p["essity_price"]) if p["essity_price"] else 0 for p in price_rows],
-                "comp_prices": [float(p["comp_price"]) if p["comp_price"] else 0 for p in price_rows]
-            },
-            "brand_breakdown": [
-                {
-                    "brand": b["brand_name"],
-                    "skus": b["total_skus"],
-                    "oos": b["oos_skus"],
-                    "avg_price": float(b["avg_price"]) if b["avg_price"] else 0
-                } for b in brand_rows
-            ]
-        }
-    finally:
-        conn.close()
-
-
-@app.get("/dashboard")
-def get_dashboard_page():
-    """Servir la página del dashboard directamente"""
-    if os.path.exists("app/dashboard.html"):
-        return FileResponse("app/dashboard.html")
-    if os.path.exists("dashboard.html"):
-        return FileResponse("dashboard.html")
-    raise HTTPException(status_code=404, detail="dashboard.html no encontrado.")
 
 
 @app.post("/admin/add-is-active-column")
@@ -877,8 +313,7 @@ def get_results(
         SELECT 
             id, retailer, search_term, product_name, 
             COALESCE(brand, 'Sin Marca') AS brand, 
-            position, price, discount_price, is_available, description,
-            COALESCE(seller_name, retailer) AS seller_name,
+            position, price, discount_price, is_available,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results 
         WHERE 1=1
@@ -938,8 +373,7 @@ def export_results(
         SELECT 
             id, retailer, search_term, product_name, 
             COALESCE(brand, 'Sin Marca') AS brand, 
-            position, price, discount_price, is_available, description,
-            COALESCE(seller_name, retailer) AS seller_name,
+            position, price, discount_price, is_available,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results WHERE 1=1
     """
@@ -971,8 +405,7 @@ def export_results(
         SELECT DISTINCT ON (retailer, search_term, product_name)
             id, retailer, search_term, product_name, 
             COALESCE(brand, 'Sin Marca') AS brand, 
-            position, price, discount_price, is_available, description,
-            COALESCE(seller_name, retailer) AS seller_name,
+            position, price, discount_price, is_available,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results
         WHERE 1=1
