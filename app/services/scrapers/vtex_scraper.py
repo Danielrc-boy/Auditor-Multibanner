@@ -26,22 +26,21 @@ class VTEXScraper:
 
     def _build_request(self, target_url: str, params_dict: dict = None):
         """
-        Envía solicitudes a través de ScraperAPI asignando country_code=co
-        para evitar bloqueos geográficos/Cloudflare de VTEX.
+        Construye la URL para ScraperAPI con geolocalización residencial en Colombia
+        y preservación de cabeceras para evadir el Anti-Bot de Cloudflare/VTEX.
         """
         if SCRAPERAPI_KEY:
-            # Construir la URL destino con sus parámetros originales
             if params_dict:
                 query_string = urllib.parse.urlencode(params_dict)
                 full_target = f"{target_url}?{query_string}"
             else:
                 full_target = target_url
 
-            # Parámetros para ScraperAPI
             scraper_params = {
                 "api_key": SCRAPERAPI_KEY,
                 "url": full_target,
-                "country_code": "co",  # Geolocalización Colombia
+                "country_code": "co",
+                "keep_headers": "true"
             }
             return "http://api.scraperapi.com/", scraper_params
 
