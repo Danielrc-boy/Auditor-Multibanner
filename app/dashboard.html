@@ -220,13 +220,12 @@
                             <th class="p-3">Marca</th>
                             <th class="p-3">Precio Lista</th>
                             <th class="p-3">Precio Final</th>
-                            <th class="p-3">% DESC.</th>
                             <th class="p-3">Permanencia</th>
                             <th class="p-3">Estado</th>
                         </tr>
                     </thead>
                     <tbody id="positionsTableBody" class="divide-y divide-slate-800">
-                        <tr><td colspan="9" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
+                        <tr><td colspan="8" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -265,16 +264,17 @@
     <script>
         const API_BASE = window.location.origin;
 
+        // Función auxiliar para obtener el retailer seleccionado
         function getSelectedRetailer() {
             const select = document.getElementById("filterRetailer");
             return (select && select.value !== "ALL") ? select.value : "";
         }
 
+        // Manejador del cambio de retailer para re-cargar todos los componentes dinámicos
         function onRetailerChange() {
             loadDashboardData();
             loadContentCompliance();
             loadAssortmentCompliance();
-            loadFilterOptions();
         }
 
         async function uploadExcel(event) {
@@ -329,6 +329,7 @@
                 }
 
                 tbody.innerHTML = items.map((item, idx) => {
+                    // Mantenemos referencia global si es necesaria
                     window[`desc_item_${idx}`] = item;
                     
                     return `
@@ -423,29 +424,28 @@
 
         async function loadFilterOptions() {
             try {
-                const retailer = document.getElementById('filterRetailer') ? document.getElementById('filterRetailer').value : 'ALL';
-                const term = document.getElementById('filterTerm') ? document.getElementById('filterTerm').value : 'ALL';
-
-                const res = await fetch(`${API_BASE}/analytics/options?retailer=${encodeURIComponent(retailer)}&search_term=${encodeURIComponent(term)}`);
+                const res = await fetch(`${API_BASE}/analytics/options`);
                 const data = await res.json();
                 
                 const brandSelect = document.getElementById('selectBrand');
-                brandSelect.innerHTML = '<option value="ALL">Todas las Marcas</option>';
-                data.brands.forEach(b => {
-                    const opt = document.createElement('option');
-                    opt.value = b;
-                    opt.innerText = b;
-                    brandSelect.appendChild(opt);
-                });
+                if (brandSelect.children.length <= 1) {
+                    data.brands.forEach(b => {
+                        const opt = document.createElement('option');
+                        opt.value = b;
+                        opt.innerText = b;
+                        brandSelect.appendChild(opt);
+                    });
+                }
 
                 const prodSelect = document.getElementById('selectProduct');
-                prodSelect.innerHTML = '<option value="ALL">Todas las Referencias</option>';
-                data.products.forEach(p => {
-                    const opt = document.createElement('option');
-                    opt.value = p;
-                    opt.innerText = p.length > 50 ? p.substring(0, 50) + '...' : p;
-                    prodSelect.appendChild(opt);
-                });
+                if (prodSelect.children.length <= 1) {
+                    data.products.forEach(p => {
+                        const opt = document.createElement('option');
+                        opt.value = p;
+                        opt.innerText = p.length > 50 ? p.substring(0, 50) + '...' : p;
+                        prodSelect.appendChild(opt);
+                    });
+                }
 
                 populateProductCompareSelects(data.products);
             } catch (err) {
@@ -498,31 +498,18 @@
 
                 const tbody = document.getElementById('positionsTableBody');
                 if (!rows.length) {
-                    tbody.innerHTML = `<tr><td colspan="9" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
                     return;
                 }
 
-                tbody.innerHTML = rows.map(r => {
-                    const listPrice = Number(r.price) || 0;
-                    const finalPrice = Number(r.discount_price && r.discount_price > 0 ? r.discount_price : r.price) || 0;
-
-                    let discountBadge = '<span class="text-slate-600">-</span>';
-                    if (listPrice > 0 && finalPrice > 0 && listPrice > finalPrice) {
-                        const pct = Math.round(((listPrice - finalPrice) / listPrice) * 100);
-                        if (pct > 0) {
-                            discountBadge = `<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-bold">-${pct}%</span>`;
-                        }
-                    }
-
-                    return `
+                tbody.innerHTML = rows.map(r => `
                     <tr class="hover:bg-slate-800/30 transition">
                         <td class="p-3 font-bold ${r.position <= 10 ? 'text-indigo-400' : 'text-slate-400'}">#${r.position}</td>
                         <td class="p-3"><span class="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded text-[10px]">${r.retailer}</span></td>
                         <td class="p-3 font-medium text-slate-200 max-w-xs truncate" title="${r.product_name}">${r.product_name}</td>
                         <td class="p-3 text-slate-400">${r.brand}</td>
-                        <td class="p-3 font-mono">$${listPrice.toLocaleString()}</td>
-                        <td class="p-3 font-mono text-emerald-400 font-semibold">$${finalPrice.toLocaleString()}</td>
-                        <td class="p-3 font-mono">${discountBadge}</td>
+                        <td class="p-3 font-mono">$${Number(r.price).toLocaleString()}</td>
+                        <td class="p-3 font-mono text-emerald-400 font-semibold">$${Number(r.discount_price && r.discount_price > 0 ? r.discount_price : r.price).toLocaleString()}</td>
                         <td class="p-3">
                             <span class="px-2 py-0.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded text-[10px] font-mono">
                                 ${r.run_count || 1} corrida(s) sin cambios
@@ -535,8 +522,7 @@
                             }
                         </td>
                     </tr>
-                `;
-                }).join('');
+                `).join('');
             } catch (err) {
                 console.error("Error cargando tabla:", err);
             }
