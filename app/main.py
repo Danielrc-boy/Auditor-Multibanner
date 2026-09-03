@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import io
+import unicodedata
 from io import BytesIO
 from uuid import UUID
 from typing import Optional, List
@@ -44,6 +45,118 @@ def get_db_connection():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
+
+# --- FUNCIONES DE CUMPLIMIENTO (FASE 3) ---
+
+def normalize_text(text: str) -> str:
+    """
+    Normaliza el texto: minúsculas, elimina tildes/acentos 
+    y limpia espacios en blanco adicionales.
+    """
+    if not text:
+        return ""
+    text = text.lower()
+    text = unicodedata.normalize('NFD', text)
+    text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
+    return ' '.join(text.split())
+
+
+def check_content_compliance() -> list[dict]:
+    query = """
+        SELECT DISTINCT ON (ed.product_name)
+            ed.product_name,
+            ed.descripcion_esperada,
+            sr.description AS descripcion_capturada
+        FROM expected_descriptions ed
+        LEFT JOIN scraper_results sr 
+            ON LOWER(TRIM(ed.product_name)) = LOWER(TRIM(sr.product_name))
+        ORDER BY ed.product_name, sr.captured_at DESC;
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            
+        results = []
+        for row in rows:
+            # Sombra RealDictCursor vs Tupla
+            prod_name = row["product_name"]
+            exp_desc = row["descripcion_esperada"]
+            cap_desc = row["descripcion_capturada"]
+
+            norm_exp = normalize_text(exp_desc)
+            norm_cap = normalize_text(cap_desc)
+            
+            cumple = (norm_exp == norm_cap) if norm_cap else False
+            
+            results.append({
+                "product_name": prod_name,
+                "descripcion_esperada": exp_desc,
+                "descripcion_capturada": cap_desc or "",
+                "estado": "Cumple" if cumple else "No cumple"
+            })
+        return results
+    finally:
+        conn.close()
+
+
+def check_assortment_compliance() -> list[dict]:
+    query = """
+        WITH latest_captures AS (
+            SELECT DISTINCT ON (retailer, product_name)
+                retailer,
+                product_name,
+                captured_at
+            FROM scraper_results
+            ORDER BY retailer, product_name, captured_at DESC
+        )
+        SELECT 
+            ra.retailer,
+            ra.product_name,
+            CASE 
+                WHEN lc.product_name IS NOT NULL THEN 'Presente'
+                ELSE 'Faltante'
+            END AS estado
+        FROM required_assortment ra
+        LEFT JOIN latest_captures lc 
+            ON LOWER(TRIM(ra.retailer)) = LOWER(TRIM(lc.retailer))
+           AND LOWER(TRIM(ra.product_name)) = LOWER(TRIM(lc.product_name))
+        WHERE ra.obligatorio = TRUE;
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            
+        return [
+            {
+                "retailer": row["retailer"],
+                "product_name": row["product_name"],
+                "estado": row["estado"]
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+# --- ENDPOINTS ANALYTICS CUMPLIMIENTO ---
+
+@app.get("/analytics/content-compliance")
+def get_content_compliance():
+    """Evalúa la coincidencia exacta de descripciones (normalizadas) capturadas vs esperadas."""
+    return check_content_compliance()
+
+
+@app.get("/analytics/assortment-compliance")
+def get_assortment_compliance():
+    """Evalúa la presencia o ausencia de productos obligatorios en cada retailer."""
+    return check_assortment_compliance()
+
+
+# --- OPERACIONES BASE DE DATOS ---
 
 def update_expected_descriptions(records: list[dict]):
     conn = get_db_connection()
