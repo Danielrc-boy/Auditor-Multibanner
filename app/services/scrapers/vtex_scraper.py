@@ -1,8 +1,7 @@
 import os
-import json
-import urllib.parse
 import httpx
 from typing import List
+from uuid import UUID, uuid4
 from app.schemas import ExtractedProductData
 
 SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
@@ -10,112 +9,72 @@ SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
 class VTEXScraper:
     def __init__(self, retailer: str = "exito"):
         self.retailer = retailer.lower()
-        self.domain = "www.carulla.com" if self.retailer == "carulla" else "www.exito.com"
-        self.base_url = f"https://{self.domain}"
-
+        if self.retailer == "carulla":
+            self.base_url = "https://www.carulla.com"
+        else:
+            self.base_url = "https://www.exito.com"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-CO,es;q=0.9",
-            "Content-Type": "application/json",
-            "Origin": self.base_url,
-            "Referer": f"{self.base_url}/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/json"
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        clean_keyword = keyword.strip()
+        target_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}"
+
+        if SCRAPERAPI_KEY:
+            request_url = "http://api.scraperapi.com/"
+            params = {"api_key": SCRAPERAPI_KEY, "url": target_url}
+        else:
+            request_url = target_url
+            params = None
 
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
-            
-            # --- ESTRATEGIA 1: GraphQL VTEX IO (Search Resolver - Usado por la Web) ---
-            gql_url = f"{self.base_url}/_v/segment/graphql/v1"
-            gql_query = {
-                "query": """query productSearch($query: String, $from: Int, $to: Int) {
-                    productSearch(query: $query, from: $from, to: $to) {
-                        products {
-                            productName
-                            brand
-                            items {
-                                sellers {
-                                    commertialOffer {
-                                        Price
-                                        ListPrice
-                                        AvailableQuantity
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }""",
-                "variables": {"query": clean_keyword, "from": 0, "to": limit - 1}
-            }
-
-            req_url, params = self._build_request(gql_url)
-            
             try:
-                if params and "api_key" in params:
-                    # Si usamos ScraperAPI en POST
-                    res = await client.post(req_url, json=gql_query, headers=self.headers, params=params)
-                else:
-                    res = await client.post(gql_url, json=gql_query, headers=self.headers)
-
-                if res.status_code == 200:
-                    data = res.json()
-                    products = data.get("data", {}).get("productSearch", {}).get("products", [])
-                    if products:
-                        return self._parse_catalog_search(products, clean_keyword)
+                response = await client.get(request_url, headers=self.headers, params=params)
+                if response.status_code not in (200, 206):
+                    print(f"[ERROR {self.retailer.upper()}] Status {response.status_code}", flush=True)
+                    return []
+                raw_products = response.json()
+                return self._parse_products(raw_products, keyword, limit)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] GraphQL Search falló: {e}", flush=True)
+                print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{keyword}': {e}", flush=True)
+                return []
 
-            # --- ESTRATEGIA 2: Catalog System Public API con Sales Channel ---
-            encoded_term = urllib.parse.quote(clean_keyword)
-            catalog_url = f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_term}?_from=0&_to={limit-1}&sc=1"
-            req_cat_url, cat_params = self._build_request(catalog_url)
-
-            try:
-                res_cat = await client.get(req_cat_url, headers=self.headers, params=cat_params)
-                if res_cat.status_code in (200, 206):
-                    data = res_cat.json()
-                    if isinstance(data, list) and len(data) > 0:
-                        return self._parse_catalog_search(data, clean_keyword)
-            except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] Catalog Search falló: {e}", flush=True)
-
-        return []
-
-    def _build_request(self, target_url: str):
-        if SCRAPERAPI_KEY:
-            return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": target_url, "ultra_premium": "true"}
-        return target_url, {}
-
-    def _parse_catalog_search(self, products: list, search_term: str) -> List[ExtractedProductData]:
+    def _parse_products(self, raw_products: list, search_term: str, limit: int) -> List[ExtractedProductData]:
         parsed = []
-        for idx, prod in enumerate(products, start=1):
+        for idx, prod in enumerate(raw_products[:limit], start=1):
             try:
                 items = prod.get("items", [])
-                item = items[0] if items else {}
+                if not items:
+                    continue
+                item = items[0]
                 sellers = item.get("sellers", [{}])
                 comm = sellers[0].get("commertialOffer", {}) if sellers else {}
-
+                base_price = float(comm.get("ListPrice", 0.0) or 0.0)
                 price = float(comm.get("Price", 0.0) or 0.0)
-                list_price = float(comm.get("ListPrice", 0.0) or price)
-                discount_price = price if (0 < price < list_price) else None
+                discount_price = None
+                if 0 < price < base_price:
+                    discount_price = price
+                elif base_price == 0 and price > 0:
+                    base_price = price
                 in_stock = comm.get("AvailableQuantity", 0) > 0
-
                 parsed.append(ExtractedProductData(
                     search_keyword=search_term,
                     search_position=idx,
                     title=prod.get("productName", "Sin título"),
                     brand=prod.get("brand", "Sin Marca"),
-                    base_price=list_price,
+                    base_price=base_price,
                     discount_price=discount_price,
                     in_stock=in_stock
                 ))
-            except Exception:
+            except Exception as e:
+                print(f"[PARSER ERROR] {self.retailer.upper()}: {e}", flush=True)
                 continue
         return parsed
 
+
 async def run_vtex_scraping(conn) -> int:
+    """Función de orquestación consumida directamente por app/main.py"""
     search_configs = []
     with conn.cursor() as cur:
         cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
