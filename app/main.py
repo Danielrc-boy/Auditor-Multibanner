@@ -1,10 +1,11 @@
 import os
 import io
+from io import BytesIO
 from uuid import UUID
 from typing import Optional, List
 from datetime import datetime
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -43,11 +44,52 @@ def get_db_connection():
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
 
 
+def update_expected_descriptions(records: list[dict]):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("TRUNCATE TABLE expected_descriptions;")
+            query = """
+                INSERT INTO expected_descriptions (product_name, descripcion_esperada)
+                VALUES (%s, %s)
+            """
+            cursor.executemany(
+                query,
+                [(r["product_name"], r["descripcion_esperada"]) for r in records]
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error actualizando descripciones esperadas: {str(e)}")
+    finally:
+        conn.close()
+
+
+def update_required_assortment(records: list[dict]):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("TRUNCATE TABLE required_assortment;")
+            query = """
+                INSERT INTO required_assortment (retailer, product_name, obligatorio)
+                VALUES (%s, %s, %s)
+            """
+            cursor.executemany(
+                query,
+                [(r["retailer"], r["product_name"], r["obligatorio"]) for r in records]
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error actualizando surtido obligatorio: {str(e)}")
+    finally:
+        conn.close()
+
+
 def save_scraper_results(conn, results: list, retailer: str) -> int:
     if not results:
         return 0
     
-    # Inclusión de description y seller_name en el INSERT
     insert_query = """
         INSERT INTO scraper_results (
             retailer, search_term, product_name, brand, position,
@@ -70,7 +112,6 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                 stock = getattr(item, "in_stock", True)
                 description = getattr(item, "description", None)
                 
-                # Obtener seller_name o usar el nombre del Retailer por defecto
                 seller_name = getattr(item, "seller_name", None) or getattr(item, "seller", None) or formatted_retailer
                 
                 cur.execute(
@@ -177,6 +218,57 @@ class SearchConfigCreate(BaseModel):
 @app.get("/")
 def read_root():
     return {"message": "API Monitoreo Activa"}
+
+
+# --- ENDPOINT ADMIN: CARGA DE ARCHIVOS EXCEL (REQUISITOS Y PORTAFOLIO) ---
+@app.post("/admin/upload-requirements")
+async def upload_requirements(file: UploadFile = File(...)):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="El archivo debe ser un Excel (.xlsx o .xls)")
+
+    contents = await file.read()
+    excel_file = BytesIO(contents)
+
+    try:
+        # Lectura de la hoja Descripciones
+        df_desc = pd.read_excel(excel_file, sheet_name="Descripciones")
+        df_desc.columns = df_desc.columns.str.strip().str.lower()
+        required_cols_desc = {"product_name", "descripcion_esperada"}
+        if not required_cols_desc.issubset(df_desc.columns):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"La hoja 'Descripciones' debe contener las columnas: {required_cols_desc}"
+            )
+        
+        # Lectura de la hoja Portafolio
+        excel_file.seek(0)
+        df_port = pd.read_excel(excel_file, sheet_name="Portafolio")
+        df_port.columns = df_port.columns.str.strip().str.lower()
+        required_cols_port = {"retailer", "product_name", "obligatorio"}
+        if not required_cols_port.issubset(df_port.columns):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"La hoja 'Portafolio' debe contener las columnas: {required_cols_port}"
+            )
+
+        # Reemplazo en Base de Datos
+        desc_records = df_desc[["product_name", "descripcion_esperada"]].to_dict(orient="records")
+        port_records = df_port[["retailer", "product_name", "obligatorio"]].to_dict(orient="records")
+
+        update_expected_descriptions(desc_records)
+        update_required_assortment(port_records)
+
+        return {
+            "status": "success",
+            "message": "Tablas actualizadas correctamente",
+            "descripciones_procesadas": len(desc_records),
+            "portafolio_procesado": len(port_records)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al procesar el archivo: {str(e)}")
 
 
 # --- ENDPOINT ADMIN: LIMPIEZA DE BASE DE DATOS ---
@@ -373,14 +465,12 @@ def get_dashboard_data(
             params.append(date_to)
 
         with conn.cursor() as cur:
-            # 1. Filtros disponibles para desplegables en Frontend
             cur.execute("SELECT DISTINCT retailer FROM scraper_results WHERE retailer IS NOT NULL ORDER BY retailer;")
             available_retailers = [r["retailer"].capitalize() for r in cur.fetchall()]
 
             cur.execute("SELECT DISTINCT search_term FROM scraper_results WHERE search_term IS NOT NULL ORDER BY search_term;")
             available_terms = [r["search_term"] for r in cur.fetchall()]
 
-            # 2. Resumen General y Métricas Clave
             cur.execute(f"""
                 SELECT 
                     COUNT(*) as total_monitored,
@@ -397,7 +487,6 @@ def get_dashboard_data(
             stock_out = summary_row["out_of_stock_count"] if summary_row and summary_row["out_of_stock_count"] else 0
             availability = round(((total - stock_out) / total) * 100, 1) if total > 0 else 100.0
 
-            # 3. Share of Shelf Global & Top 10 (Visibilidad)
             cur.execute(f"""
                 SELECT 
                     retailer,
@@ -411,7 +500,6 @@ def get_dashboard_data(
             """, tuple(params))
             sos_rows = cur.fetchall()
 
-            # 4. Evolución de Precio Promedio por Marca (Essity vs Competencia)
             cur.execute(f"""
                 SELECT 
                     TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD') as date_label,
@@ -424,7 +512,6 @@ def get_dashboard_data(
             """, tuple(params))
             price_rows = cur.fetchall()
 
-            # 5. Top Marcas por Presencia (Desglose Comercial)
             cur.execute(f"""
                 SELECT 
                     COALESCE(brand, 'Sin Marca') as brand_name,
