@@ -3,23 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Digital Shelf & Retail Intelligence</title>
+    <title>Digital Shelf & Retail Intelligence Suite</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body class="bg-slate-900 text-slate-100 font-sans min-h-screen">
 
-    <!-- TOPBAR -->
     <nav class="border-b border-slate-800 bg-slate-950/80 backdrop-blur fixed w-full z-50">
         <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
             <div class="flex items-center gap-3">
                 <div class="p-2 bg-indigo-600 rounded-lg">
-                    <i class="fa-solid me-2 fa-chart-line text-xl text-white"></i>
+                    <i class="fa-solid fa-chart-line text-xl text-white"></i>
                 </div>
                 <div>
                     <h1 class="font-bold text-lg leading-none">Retail Intelligence Suite</h1>
-                    <span class="text-xs text-slate-400">Digital Shelf & Competitor Analytics</span>
+                    <span class="text-xs text-slate-400">Éxito, Carulla & Multi-Banner Digital Shelf</span>
                 </div>
             </div>
             <div class="flex items-center gap-3">
@@ -35,7 +34,7 @@
 
     <div class="pt-24 pb-12 max-w-7xl mx-auto px-6 space-y-8">
 
-        <!-- MÓDULO DE CARGA DE EXCEL -->
+        <!-- MÓDULO CARGA DE REQUISITOS -->
         <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
             <div class="border-b border-slate-700/50 pb-3">
                 <h2 class="text-base font-bold text-white flex items-center gap-2">
@@ -43,7 +42,6 @@
                 </h2>
                 <p class="text-xs text-slate-400">Sube el archivo Excel con los productos infaltables y descripciones esperadas</p>
             </div>
-            
             <form id="uploadExcelForm" onsubmit="uploadExcel(event)" class="flex flex-wrap md:flex-nowrap gap-3 items-center">
                 <input type="file" id="excelFile" accept=".xlsx, .xls" required class="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-indigo-400 hover:file:bg-slate-700 border border-slate-700 rounded-lg bg-slate-900/50 cursor-pointer">
                 <button type="submit" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition whitespace-nowrap shadow-md">
@@ -53,7 +51,7 @@
             <div id="uploadStatus" class="text-xs font-semibold mt-2 hidden"></div>
         </div>
 
-        <!-- FILTROS GLOBALES -->
+        <!-- FILTROS PRINCIPALES -->
         <div class="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl flex flex-wrap gap-4 items-center justify-between">
             <div class="flex flex-wrap gap-3 items-center w-full md:w-auto">
                 <div>
@@ -92,65 +90,14 @@
             </div>
         </div>
 
-        <!-- SECCIÓN: CUMPLIMIENTO Y REQUISITOS -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Widget 1: Cumplimiento de Descripción -->
-            <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
-                <div class="border-b border-slate-700/50 pb-3">
-                    <h2 class="text-base font-bold text-white flex items-center gap-2">
-                        <i class="fa-solid fa-align-left text-indigo-400"></i> Cumplimiento de Descripción
-                    </h2>
-                    <p class="text-xs text-slate-400">Coincidencia exacta de texto esperado vs capturado</p>
-                </div>
-                <div class="overflow-x-auto max-h-80 overflow-y-auto">
-                    <table class="w-full text-left text-xs text-slate-300">
-                        <thead class="bg-slate-900/80 text-slate-400 uppercase font-bold text-[10px] sticky top-0">
-                            <tr>
-                                <th class="p-3">Producto</th>
-                                <th class="p-3">Estado</th>
-                                <th class="p-3">Acción</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tblContentCompliance" class="divide-y divide-slate-800">
-                            <tr><td colspan="3" class="p-4 text-center text-slate-500">Cargando datos...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Widget 2: Portafolio Infaltable -->
-            <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
-                <div class="border-b border-slate-700/50 pb-3">
-                    <h2 class="text-base font-bold text-white flex items-center gap-2">
-                        <i class="fa-solid fa-boxes-packing text-emerald-400"></i> Portafolio Infaltable
-                    </h2>
-                    <p class="text-xs text-slate-400">Presencia de productos obligatorios por retailer</p>
-                </div>
-                <div class="overflow-x-auto max-h-80 overflow-y-auto">
-                    <table class="w-full text-left text-xs text-slate-300">
-                        <thead class="bg-slate-900/80 text-slate-400 uppercase font-bold text-[10px] sticky top-0">
-                            <tr>
-                                <th class="p-3">Retailer</th>
-                                <th class="p-3">Producto</th>
-                                <th class="p-3">Estado</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tblAssortmentCompliance" class="divide-y divide-slate-800">
-                            <tr><td colspan="3" class="p-4 text-center text-slate-500">Cargando datos...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- MÓDULO COMPARADOR HEAD-TO-HEAD POR REFERENCIAS -->
+        <!-- COMPARADOR HEAD-TO-HEAD -->
         <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-6">
             <div class="flex justify-between items-center border-b border-slate-700/50 pb-4">
                 <div>
                     <h2 class="text-base font-bold text-white flex items-center gap-2">
                         <i class="fa-solid fa-code-compare text-indigo-400"></i> Comparador Head-to-Head por Referencias
                     </h2>
-                    <p class="text-xs text-slate-400">Compara la referencia de la derecha evaluando sus brechas con respecto al producto base de la izquierda</p>
+                    <p class="text-xs text-slate-400">Compara la referencia de la derecha evaluando sus brechas con respecto al producto base</p>
                 </div>
                 <button onclick="runProductComparison()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-500 shadow-md">
                     Comparar Referencias
@@ -172,25 +119,22 @@
                 </div>
             </div>
 
-            <!-- RESULTADOS Y DIFERENCIALES -->
             <div id="productCompareResults" class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 hidden">
                 <div id="cardProdA" class="p-4 bg-slate-900/80 border border-indigo-500/30 rounded-xl space-y-3"></div>
                 <div id="cardProdB" class="p-4 bg-slate-900/80 border border-rose-500/30 rounded-xl space-y-3"></div>
             </div>
         </div>
 
-        <!-- TABLA DE AUDITORÍA DIGITAL SHELF -->
+        <!-- TABLA AUDITORÍA -->
         <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
             <div class="flex flex-wrap justify-between items-center gap-4 border-b border-slate-700/50 pb-4">
                 <div>
                     <h2 class="text-base font-bold text-white flex items-center gap-2">
                         <i class="fa-solid fa-list-ol text-emerald-400"></i> Auditoría de Posiciones y Productos
                     </h2>
-                    <p class="text-xs text-slate-400">Registros agrupados por permanencia y estabilidad de datos</p>
                 </div>
             </div>
 
-            <!-- FILTROS DESPLEGABLES DEDICADOS -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                     <label class="block text-[10px] text-slate-400 uppercase font-bold mb-1">Filtrar por Marca</label>
@@ -220,12 +164,11 @@
                             <th class="p-3">Marca</th>
                             <th class="p-3">Precio Lista</th>
                             <th class="p-3">Precio Final</th>
-                            <th class="p-3">Permanencia</th>
                             <th class="p-3">Estado</th>
                         </tr>
                     </thead>
                     <tbody id="positionsTableBody" class="divide-y divide-slate-800">
-                        <tr><td colspan="8" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
+                        <tr><td colspan="7" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -233,169 +176,16 @@
 
     </div>
 
-    <!-- MODAL DE DIFERENCIA DE TEXTO -->
-    <div id="diffModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur hidden">
-        <div class="bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-xl p-6 space-y-4 relative shadow-2xl">
-            <button onclick="closeDiffModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg">
-                <i class="fa-solid fa-xmark"></i>
-            </button>
-            <h3 class="text-base font-bold text-white flex items-center gap-2">
-                <i class="fa-solid fa-code-compare text-indigo-400"></i> Comparativa de Descripción
-            </h3>
-            <p class="text-xs text-slate-300 font-semibold"><span class="text-slate-500">Producto:</span> <span id="modalProdName"></span></p>
-            
-            <div class="space-y-3 pt-2">
-                <div>
-                    <span class="text-[10px] uppercase font-bold text-emerald-400">Descripción Esperada:</span>
-                    <div id="modalExpected" class="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-300 font-mono mt-1 break-words"></div>
-                </div>
-                <div>
-                    <span class="text-[10px] uppercase font-bold text-rose-400">Descripción Capturada:</span>
-                    <div id="modalCaptured" class="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-300 font-mono mt-1 break-words"></div>
-                </div>
-            </div>
-            
-            <div class="text-right pt-2">
-                <button onclick="closeDiffModal()" class="px-4 py-2 bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-semibold rounded-lg transition">Cerrar</button>
-            </div>
-        </div>
-    </div>
-
     <script>
         const API_BASE = window.location.origin;
 
-        // Función auxiliar para obtener el retailer seleccionado
         function getSelectedRetailer() {
             const select = document.getElementById("filterRetailer");
             return (select && select.value !== "ALL") ? select.value : "";
         }
 
-        // Manejador del cambio de retailer para re-cargar todos los componentes dinámicos
         function onRetailerChange() {
             loadDashboardData();
-            loadContentCompliance();
-            loadAssortmentCompliance();
-        }
-
-        async function uploadExcel(event) {
-            event.preventDefault();
-            const fileInput = document.getElementById('excelFile');
-            const statusDiv = document.getElementById('uploadStatus');
-            if (!fileInput.files.length) return;
-
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-
-            statusDiv.classList.remove('hidden', 'text-emerald-400', 'text-rose-400');
-            statusDiv.classList.add('text-indigo-400');
-            statusDiv.innerText = "Subiendo y procesando archivo...";
-
-            try {
-                const res = await fetch(`${API_BASE}/admin/upload-requirements`, {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await res.json();
-                
-                if (res.ok) {
-                    statusDiv.classList.replace('text-indigo-400', 'text-emerald-400');
-                    statusDiv.innerText = data.message || "¡Requisitos actualizados exitosamente!";
-                    loadContentCompliance();
-                    loadAssortmentCompliance();
-                } else {
-                    throw new Error(data.detail || "Error al procesar el archivo Excel.");
-                }
-            } catch (err) {
-                statusDiv.classList.replace('text-indigo-400', 'text-rose-400');
-                statusDiv.innerText = err.message;
-            }
-        }
-
-        async function loadContentCompliance() {
-            try {
-                const retailer = getSelectedRetailer();
-                const url = retailer 
-                    ? `${API_BASE}/content-compliance?retailer=${encodeURIComponent(retailer)}` 
-                    : `${API_BASE}/content-compliance`;
-
-                const res = await fetch(url);
-                const result = await res.json();
-                const items = result.data || [];
-                const tbody = document.getElementById('tblContentCompliance');
-
-                if (!items.length) {
-                    tbody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-500">Sin requisitos cargados.</td></tr>`;
-                    return;
-                }
-
-                tbody.innerHTML = items.map((item, idx) => {
-                    // Mantenemos referencia global si es necesaria
-                    window[`desc_item_${idx}`] = item;
-                    
-                    return `
-                    <tr class="hover:bg-slate-800/30 transition">
-                        <td class="p-3 font-medium text-slate-200 max-w-xs truncate" title="${item.product_name}">${item.product_name}</td>
-                        <td class="p-3">
-                            ${item.estado === 'Cumple'
-                                ? '<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px]">Cumple</span>'
-                                : '<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px]">No cumple</span>'
-                            }
-                        </td>
-                        <td class="p-3">
-                            <button onclick='openDiffModal(${JSON.stringify(item)})' class="px-2 py-1 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded hover:bg-indigo-600 hover:text-white transition text-[10px]">
-                                Ver Detalle
-                            </button>
-                        </td>
-                    </tr>`;
-                }).join('');
-            } catch (err) {
-                console.error("Error cargando cumplimiento de contenido:", err);
-            }
-        }
-
-        async function loadAssortmentCompliance() {
-            try {
-                const retailer = getSelectedRetailer();
-                const url = retailer 
-                    ? `${API_BASE}/assortment-compliance?retailer=${encodeURIComponent(retailer)}` 
-                    : `${API_BASE}/assortment-compliance`;
-
-                const res = await fetch(url);
-                const result = await res.json();
-                const items = result.data || [];
-                const tbody = document.getElementById('tblAssortmentCompliance');
-
-                if (!items.length) {
-                    tbody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-slate-500">Sin portafolio infaltable cargado.</td></tr>`;
-                    return;
-                }
-
-                tbody.innerHTML = items.map(item => `
-                    <tr class="hover:bg-slate-800/30 transition">
-                        <td class="p-3"><span class="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded text-[10px]">${item.retailer}</span></td>
-                        <td class="p-3 font-medium text-slate-200 max-w-xs truncate" title="${item.product_name}">${item.product_name}</td>
-                        <td class="p-3">
-                            ${item.estado === 'Presente'
-                                ? '<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px]">Presente</span>'
-                                : '<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px]">Faltante</span>'
-                            }
-                        </td>
-                    </tr>
-                `).join('');
-            } catch (err) {
-                console.error("Error cargando portafolio infaltable:", err);
-            }
-        }
-
-        function openDiffModal(item) {
-            document.getElementById('modalProdName').innerText = item.product_name;
-            document.getElementById('modalExpected').innerText = item.descripcion_esperada || '(Vacio)';
-            document.getElementById('modalCaptured').innerText = item.descripcion_capturada || '(Sin captura)';
-            document.getElementById('diffModal').classList.remove('hidden');
-        }
-
-        function closeDiffModal() {
-            document.getElementById('diffModal').classList.add('hidden');
         }
 
         async function loadDashboardData() {
@@ -498,7 +288,7 @@
 
                 const tbody = document.getElementById('positionsTableBody');
                 if (!rows.length) {
-                    tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
                     return;
                 }
 
@@ -510,11 +300,6 @@
                         <td class="p-3 text-slate-400">${r.brand}</td>
                         <td class="p-3 font-mono">$${Number(r.price).toLocaleString()}</td>
                         <td class="p-3 font-mono text-emerald-400 font-semibold">$${Number(r.discount_price && r.discount_price > 0 ? r.discount_price : r.price).toLocaleString()}</td>
-                        <td class="p-3">
-                            <span class="px-2 py-0.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded text-[10px] font-mono">
-                                ${r.run_count || 1} corrida(s) sin cambios
-                            </span>
-                        </td>
                         <td class="p-3">
                             ${r.is_available 
                                 ? '<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px]">In Stock</span>'
@@ -544,7 +329,7 @@
                 renderProductCardA('cardProdA', data.product_a);
                 renderProductCardB('cardProdB', data.product_b, data.differentials);
             } catch (err) {
-                console.error("Error ejecutando comparativa de referencias:", err);
+                console.error("Error ejecutando comparativa:", err);
             }
         }
 
@@ -557,36 +342,17 @@
                     <span class="text-[10px] text-slate-400">${prod.brand || 'Sin Marca'}</span>
                 </div>
                 <div class="grid grid-cols-2 gap-3 text-xs pt-2">
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Posición Promedio</span>
-                        <span class="font-bold text-slate-200">#${prod.avg_position || '-'}</span>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Final Promedio</span>
-                        <span class="font-bold text-emerald-400">$${Number(prod.avg_final_price || 0).toLocaleString()}</span>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Lista Promedio</span>
-                        <span class="font-bold text-slate-300">$${Number(prod.avg_price || 0).toLocaleString()}</span>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Total Registros</span>
-                        <span class="font-bold text-slate-200">${prod.total_skus || 0}</span>
-                    </div>
+                    <div><span class="text-slate-500 block text-[10px]">Posición Promedio</span><span class="font-bold text-slate-200">#${prod.avg_position || '-'}</span></div>
+                    <div><span class="text-slate-500 block text-[10px]">Precio Final Promedio</span><span class="font-bold text-emerald-400">$${Number(prod.avg_final_price || 0).toLocaleString()}</span></div>
                 </div>
             `;
         }
 
         function renderProductCardB(elementId, prod, diff) {
             const card = document.getElementById(elementId);
-            
             const priceDiffBadge = diff.is_b_cheaper 
                 ? `<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-bold">-$${Math.abs(diff.price_diff).toLocaleString()} (${Math.abs(diff.price_pct)}% más económica)</span>`
                 : `<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px] font-bold">+$${diff.price_diff.toLocaleString()} (+${diff.price_pct}% más costosa)</span>`;
-
-            const posDiffBadge = diff.is_b_better_positioned
-                ? `<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-bold">${Math.abs(diff.pos_diff)} lugares arriba (Mejor Ubicada)</span>`
-                : `<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px] font-bold">${diff.pos_diff} lugares abajo (Peor Ubicada)</span>`;
 
             card.innerHTML = `
                 <div class="border-b border-slate-800 pb-2">
@@ -595,37 +361,19 @@
                     <span class="text-[10px] text-slate-400">${prod.brand || 'Sin Marca'}</span>
                 </div>
                 <div class="grid grid-cols-2 gap-3 text-xs pt-2">
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Posición Promedio</span>
-                        <span class="font-bold text-slate-200">#${prod.avg_position || '-'}</span>
-                        <div class="mt-1">${posDiffBadge}</div>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Final Promedio</span>
-                        <span class="font-bold text-emerald-400">$${Number(prod.avg_final_price || 0).toLocaleString()}</span>
-                        <div class="mt-1">${priceDiffBadge}</div>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Lista Promedio</span>
-                        <span class="font-bold text-slate-300">$${Number(prod.avg_price || 0).toLocaleString()}</span>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Total Registros</span>
-                        <span class="font-bold text-slate-200">${prod.total_skus || 0}</span>
-                    </div>
+                    <div><span class="text-slate-500 block text-[10px]">Posición Promedio</span><span class="font-bold text-slate-200">#${prod.avg_position || '-'}</span></div>
+                    <div><span class="text-slate-500 block text-[10px]">Precio Final Promedio</span><span class="font-bold text-emerald-400">$${Number(prod.avg_final_price || 0).toLocaleString()}</span><div class="mt-1">${priceDiffBadge}</div></div>
                 </div>
             `;
         }
 
         async function cleanDatabase() {
-            if (!confirm("¿Seguro que deseas eliminar TODOS los registros recolectados? Esto dejará las estadísticas en ceros.")) return;
+            if (!confirm("¿Seguro que deseas eliminar TODOS los registros recolectados?")) return;
             try {
                 const res = await fetch(`${API_BASE}/admin/clean-db?confirm=true`, { method: 'DELETE' });
                 const data = await res.json();
                 alert(data.message);
                 loadDashboardData();
-                loadContentCompliance();
-                loadAssortmentCompliance();
             } catch (err) {
                 alert("Error al limpiar la base de datos.");
             }
@@ -638,8 +386,6 @@
                 const data = await res.json();
                 alert(data.message);
                 loadDashboardData();
-                loadContentCompliance();
-                loadAssortmentCompliance();
             } catch (err) {
                 alert("Error ejecutando el scraper.");
             }
@@ -648,8 +394,6 @@
         document.addEventListener('DOMContentLoaded', () => {
             loadDashboardData();
             loadFilterOptions();
-            loadContentCompliance();
-            loadAssortmentCompliance();
         });
     </script>
 </body>
