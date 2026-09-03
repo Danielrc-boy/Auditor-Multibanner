@@ -24,9 +24,6 @@ class VTEXScraper:
         }
 
     def _build_request(self, target_url: str, params_dict: dict = None):
-        """
-        Construye la solicitud utilizando ScraperAPI con geolocalización residencial en Colombia.
-        """
         if params_dict:
             query_string = urllib.parse.urlencode(params_dict)
             full_target = f"{target_url}?{query_string}"
@@ -38,6 +35,7 @@ class VTEXScraper:
                 "api_key": SCRAPERAPI_KEY,
                 "url": full_target,
                 "country_code": "co",
+                "render": "true"  # Renderiza JS para saltarse las validaciones Anti-Bot de VTEX
             }
             return "http://api.scraperapi.com/", scraper_params
 
@@ -46,7 +44,7 @@ class VTEXScraper:
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
         encoded_term = urllib.parse.quote(keyword)
 
-        async with httpx.AsyncClient(timeout=45.0, verify=False, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=60.0, verify=False, follow_redirects=True) as client:
             
             # -----------------------------------------------------------------
             # INTENTO 1: REST Intelligent Search (API Principal)
@@ -70,11 +68,13 @@ class VTEXScraper:
                         results = self._parse_intelligent_search(products_raw, keyword, limit)
                         if results:
                             return results
+                else:
+                    print(f"[{self.retailer.upper()}] Status Code IS: {response.status_code}", flush=True)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] Intelligent Search falló: {e}", flush=True)
+                print(f"[WARN {self.retailer.upper()}] Intelligent Search falló: {type(e).__name__} - {e}", flush=True)
 
             # -----------------------------------------------------------------
-            # INTENTO 2: Legacy Catalog Search (Fallback Ultra-Estable)
+            # INTENTO 2: Legacy Catalog Search (Fallback)
             # -----------------------------------------------------------------
             legacy_url = f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_term}"
             legacy_params = {"_from": 0, "_to": limit - 1}
@@ -86,8 +86,10 @@ class VTEXScraper:
                     products_raw = response.json()
                     if isinstance(products_raw, list) and len(products_raw) > 0:
                         return self._parse_intelligent_search(products_raw, keyword, limit)
+                else:
+                    print(f"[{self.retailer.upper()}] Status Code Legacy: {response.status_code}", flush=True)
             except Exception as e:
-                print(f"[ERROR {self.retailer.upper()}] Legacy Search falló: {e}", flush=True)
+                print(f"[ERROR {self.retailer.upper()}] Legacy Search falló: {type(e).__name__} - {e}", flush=True)
 
         return []
 
