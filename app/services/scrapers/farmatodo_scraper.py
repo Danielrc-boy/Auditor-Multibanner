@@ -140,10 +140,9 @@ class FarmatodoScraper:
 
         return base_price, discount_price
 
-    def _parse_products(self, raw_hits: list, search_term: str) -> list:
+        def _parse_products(self, raw_hits: list, search_term: str) -> list:
         parsed_results = []
         valid_position = 1
-
         for item in raw_hits:
             try:
                 title = item.get("mediaDescription") or item.get("description") or item.get("name") or ""
@@ -152,8 +151,15 @@ class FarmatodoScraper:
                     continue
 
                 final_brand = self._extract_brand(item, title)
-                base_price, discount_price = self._extract_prices(item)
 
+                # Filtro de relevancia — excluye resultados que no mencionan el término buscado
+                term_normalized = normalize_text(search_term)
+                title_normalized = normalize_text(title)
+                brand_normalized = normalize_text(final_brand)
+                if term_normalized not in title_normalized and term_normalized not in brand_normalized:
+                    continue
+
+                base_price, discount_price = self._extract_prices(item)
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
@@ -168,6 +174,10 @@ class FarmatodoScraper:
                 )
                 parsed_results.append(product)
                 valid_position += 1
+            except Exception as e:
+                print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
+                continue
+        return parsed_results
 
             except Exception as e:
                 print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
