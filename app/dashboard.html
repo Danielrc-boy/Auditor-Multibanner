@@ -74,70 +74,49 @@
             </div>
         </div>
 
-        <!-- MÓDULO COMPARADOR HEAD-TO-HEAD POR REFERENCIAS -->
+        <!-- M&Oacute;DULO COMPARADOR HEAD-TO-HEAD -->
         <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-6">
             <div class="flex justify-between items-center border-b border-slate-700/50 pb-4">
                 <div>
                     <h2 class="text-base font-bold text-white flex items-center gap-2">
-                        <i class="fa-solid fa-code-compare text-indigo-400"></i> Comparador Head-to-Head por Referencias
+                        <i class="fa-solid fa-code-compare text-indigo-400"></i> Comparador Directo (Head-to-Head)
                     </h2>
-                    <p class="text-xs text-slate-400">Compara la referencia de la derecha evaluando sus brechas con respecto al producto base de la izquierda</p>
+                    <p class="text-xs text-slate-400">Analiza métricas cruzadas entre marcas en tiempo real</p>
                 </div>
-                <button onclick="runProductComparison()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-500 shadow-md">
-                    Comparar Referencias
+                <button onclick="runComparison()" class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-500">
+                    Comparar Marcas
                 </button>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div class="space-y-2">
-                    <label class="text-xs text-indigo-400 font-bold uppercase">Referencia A (Base)</label>
-                    <select id="compareProdA" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:ring-indigo-500">
-                        <option value="">Selecciona Producto Base...</option>
-                    </select>
+                    <label class="text-xs text-indigo-400 font-bold uppercase">Marca A (Objetivo)</label>
+                    <input type="text" id="brandA" value="Nosotras" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200">
                 </div>
                 <div class="space-y-2">
-                    <label class="text-xs text-rose-400 font-bold uppercase">Referencia B (A Comparar)</label>
-                    <select id="compareProdB" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:ring-indigo-500">
-                        <option value="">Selecciona Producto a Comparar...</option>
-                    </select>
+                    <label class="text-xs text-rose-400 font-bold uppercase">Marca B (Competencia)</label>
+                    <input type="text" id="brandB" value="Kotex" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200">
                 </div>
             </div>
 
-            <!-- RESULTADOS Y DIFERENCIALES -->
-            <div id="productCompareResults" class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 hidden">
-                <div id="cardProdA" class="p-4 bg-slate-900/80 border border-indigo-500/30 rounded-xl space-y-3"></div>
-                <div id="cardProdB" class="p-4 bg-slate-900/80 border border-rose-500/30 rounded-xl space-y-3"></div>
+            <!-- RESULTADOS COMPARATIVOS -->
+            <div id="compareResults" class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 hidden">
+                <div id="cardBrandA" class="p-4 bg-slate-900/60 border border-indigo-500/30 rounded-lg space-y-3"></div>
+                <div id="cardBrandB" class="p-4 bg-slate-900/60 border border-rose-500/30 rounded-lg space-y-3"></div>
             </div>
         </div>
 
-        <!-- TABLA DE AUDITOR&Iacute;A DIGITAL SHELF -->
+        <!-- TABLA DE AUDITOR&Iacute;A DIGITAL SHELF (POSICIONAMIENTO Y PRODUCTOS) -->
         <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
             <div class="flex flex-wrap justify-between items-center gap-4 border-b border-slate-700/50 pb-4">
                 <div>
                     <h2 class="text-base font-bold text-white flex items-center gap-2">
                         <i class="fa-solid fa-list-ol text-emerald-400"></i> Auditor&iacute;a de Posiciones y Productos
                     </h2>
-                    <p class="text-xs text-slate-400">Registros agrupados por permanencia y estabilidad de datos</p>
+                    <p class="text-xs text-slate-400">Ranking en góndola digital y precios en tiempo real</p>
                 </div>
-            </div>
-
-            <!-- FILTROS DESPLEGABLES DEDICADOS -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                    <label class="block text-[10px] text-slate-400 uppercase font-bold mb-1">Filtrar por Marca</label>
-                    <select id="selectBrand" onchange="loadPositionsTable()" class="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:ring-indigo-500">
-                        <option value="ALL">Todas las Marcas</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-[10px] text-slate-400 uppercase font-bold mb-1">Filtrar por Referencia / Producto</label>
-                    <select id="selectProduct" onchange="loadPositionsTable()" class="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:ring-indigo-500">
-                        <option value="ALL">Todas las Referencias</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-[10px] text-slate-400 uppercase font-bold mb-1">B&uacute;squeda Manual</label>
-                    <input type="text" id="tableSearch" onkeyup="loadPositionsTable()" placeholder="Palabra clave..." class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                <div class="w-full md:w-64">
+                    <input type="text" id="tableSearch" onkeyup="loadPositionsTable()" placeholder="Buscar producto o marca..." class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                 </div>
             </div>
 
@@ -151,12 +130,11 @@
                             <th class="p-3">Marca</th>
                             <th class="p-3">Precio Lista</th>
                             <th class="p-3">Precio Final</th>
-                            <th class="p-3">Permanencia</th>
                             <th class="p-3">Estado</th>
                         </tr>
                     </thead>
                     <tbody id="positionsTableBody" class="divide-y divide-slate-800">
-                        <tr><td colspan="8" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
+                        <tr><td colspan="7" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -193,60 +171,9 @@
             }
         }
 
-        async function loadFilterOptions() {
-            try {
-                const res = await fetch(`${API_BASE}/analytics/options`);
-                const data = await res.json();
-                
-                const brandSelect = document.getElementById('selectBrand');
-                if (brandSelect.children.length <= 1) {
-                    data.brands.forEach(b => {
-                        const opt = document.createElement('option');
-                        opt.value = b;
-                        opt.innerText = b;
-                        brandSelect.appendChild(opt);
-                    });
-                }
-
-                const prodSelect = document.getElementById('selectProduct');
-                if (prodSelect.children.length <= 1) {
-                    data.products.forEach(p => {
-                        const opt = document.createElement('option');
-                        opt.value = p;
-                        opt.innerText = p.length > 50 ? p.substring(0, 50) + '...' : p;
-                        prodSelect.appendChild(opt);
-                    });
-                }
-
-                populateProductCompareSelects(data.products);
-            } catch (err) {
-                console.error("Error cargando opciones de filtro:", err);
-            }
-        }
-
-        function populateProductCompareSelects(products) {
-            const selA = document.getElementById('compareProdA');
-            const selB = document.getElementById('compareProdB');
-            
-            selA.innerHTML = '<option value="">Selecciona Producto Base...</option>';
-            selB.innerHTML = '<option value="">Selecciona Producto a Comparar...</option>';
-
-            products.forEach(p => {
-                const optA = document.createElement('option');
-                optA.value = p;
-                optA.innerText = p;
-                selA.appendChild(optA);
-
-                const optB = document.createElement('option');
-                optB.value = p;
-                optB.innerText = p;
-                selB.appendChild(optB);
-            });
-        }
-
         function populateSelect(id, items, selectedVal) {
             const select = document.getElementById(id);
-            if (select.children.length > 1) return;
+            if (select.children.length > 1) return; // Evitar sobreescribir si ya está lleno
             items.forEach(item => {
                 const opt = document.createElement('option');
                 opt.value = item;
@@ -259,17 +186,15 @@
         async function loadPositionsTable() {
             const retailer = document.getElementById('filterRetailer').value;
             const term = document.getElementById('filterTerm').value;
-            const brand = document.getElementById('selectBrand').value;
-            const product = document.getElementById('selectProduct').value;
             const query = document.getElementById('tableSearch').value;
 
             try {
-                const res = await fetch(`${API_BASE}/analytics/positions?retailer=${retailer}&search_term=${term}&brand=${brand}&product_name=${encodeURIComponent(product)}&query=${query}&limit=50`);
+                const res = await fetch(`${API_BASE}/analytics/positions?retailer=${retailer}&search_term=${term}&query=${query}&limit=50`);
                 const rows = await res.json();
 
                 const tbody = document.getElementById('positionsTableBody');
                 if (!rows.length) {
-                    tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
                     return;
                 }
 
@@ -281,11 +206,6 @@
                         <td class="p-3 text-slate-400">${r.brand}</td>
                         <td class="p-3 font-mono">$${Number(r.price).toLocaleString()}</td>
                         <td class="p-3 font-mono text-emerald-400 font-semibold">$${Number(r.discount_price && r.discount_price > 0 ? r.discount_price : r.price).toLocaleString()}</td>
-                        <td class="p-3">
-                            <span class="px-2 py-0.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded text-[10px] font-mono">
-                                ${r.run_count || 1} corrida(s) sin cambios
-                            </span>
-                        </td>
                         <td class="p-3">
                             ${r.is_available 
                                 ? '<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px]">In Stock</span>'
@@ -299,90 +219,58 @@
             }
         }
 
-        async function runProductComparison() {
-            const prodA = document.getElementById('compareProdA').value;
-            const prodB = document.getElementById('compareProdB').value;
+        async function runComparison() {
+            const bA = document.getElementById('brandA').value;
+            const bB = document.getElementById('brandB').value;
             const retailer = document.getElementById('filterRetailer').value;
 
-            if (!prodA || !prodB) return alert("Por favor selecciona ambas referencias para realizar la comparación.");
+            if (!bA || !bB) return alert("Ingresa ambas marcas.");
 
             try {
-                const res = await fetch(`${API_BASE}/analytics/compare-products?product_a=${encodeURIComponent(prodA)}&product_b=${encodeURIComponent(prodB)}&retailer=${retailer}`);
+                const res = await fetch(`${API_BASE}/analytics/compare?brand_a=${bA}&brand_b=${bB}&retailer=${retailer}`);
                 const data = await res.json();
 
-                document.getElementById('productCompareResults').classList.remove('hidden');
+                document.getElementById('compareResults').classList.remove('hidden');
 
-                renderProductCardA('cardProdA', data.product_a);
-                renderProductCardB('cardProdB', data.product_b, data.differentials);
+                renderCompareCard('cardBrandA', data.brand_a, 'indigo');
+                renderCompareCard('cardBrandB', data.brand_b, 'rose');
             } catch (err) {
-                console.error("Error ejecutando comparativa de referencias:", err);
+                console.error("Error al comparar:", err);
             }
         }
 
-        function renderProductCardA(elementId, prod) {
+        function renderCompareCard(elementId, data, color) {
             const card = document.getElementById(elementId);
+            const m = data.metrics || {};
             card.innerHTML = `
-                <div class="border-b border-slate-800 pb-2">
-                    <span class="text-[10px] text-indigo-400 font-bold uppercase block">Referencia Base</span>
-                    <h3 class="font-bold text-sm text-slate-100 truncate" title="${prod.product_name}">${prod.product_name || 'Sin información'}</h3>
-                    <span class="text-[10px] text-slate-400">${prod.brand || 'Sin Marca'}</span>
+                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <h3 class="font-bold text-sm text-${color}-400">${data.name}</h3>
+                    <span class="text-[10px] text-slate-400 font-mono">${m.total_skus || 0} SKUs</span>
                 </div>
-                <div class="grid grid-cols-2 gap-3 text-xs pt-2">
+                <div class="grid grid-cols-2 gap-2 text-xs pt-1">
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Posición Promedio</span>
-                        <span class="font-bold text-slate-200">#${prod.avg_position || '-'}</span>
+                        <span class="text-slate-500 block text-[10px]">Posición Prom.</span>
+                        <span class="font-bold text-slate-200">#${m.avg_position || '-'}</span>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Final Promedio</span>
-                        <span class="font-bold text-emerald-400">$${Number(prod.avg_final_price || 0).toLocaleString()}</span>
+                        <span class="text-slate-500 block text-[10px]">En Top 10</span>
+                        <span class="font-bold text-slate-200">${m.top10_count || 0} SKUs</span>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Lista Promedio</span>
-                        <span class="font-bold text-slate-300">$${Number(prod.avg_price || 0).toLocaleString()}</span>
+                        <span class="text-slate-500 block text-[10px]">Precio Lista Prom.</span>
+                        <span class="font-bold text-slate-200">$${Number(m.avg_price || 0).toLocaleString()}</span>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Total Registros</span>
-                        <span class="font-bold text-slate-200">${prod.total_skus || 0}</span>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderProductCardB(elementId, prod, diff) {
-            const card = document.getElementById(elementId);
-            
-            const priceDiffBadge = diff.is_b_cheaper 
-                ? `<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-bold">-$${Math.abs(diff.price_diff).toLocaleString()} (${Math.abs(diff.price_pct)}% más económica)</span>`
-                : `<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px] font-bold">+$${diff.price_diff.toLocaleString()} (+${diff.price_pct}% más costosa)</span>`;
-
-            const posDiffBadge = diff.is_b_better_positioned
-                ? `<span class="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-bold">${Math.abs(diff.pos_diff)} lugares arriba (Mejor Ubicada)</span>`
-                : `<span class="px-2 py-0.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded text-[10px] font-bold">${diff.pos_diff} lugares abajo (Peor Ubicada)</span>`;
-
-            card.innerHTML = `
-                <div class="border-b border-slate-800 pb-2">
-                    <span class="text-[10px] text-rose-400 font-bold uppercase block">Referencia en Comparación</span>
-                    <h3 class="font-bold text-sm text-slate-100 truncate" title="${prod.product_name}">${prod.product_name || 'Sin información'}</h3>
-                    <span class="text-[10px] text-slate-400">${prod.brand || 'Sin Marca'}</span>
-                </div>
-                <div class="grid grid-cols-2 gap-3 text-xs pt-2">
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Posición Promedio</span>
-                        <span class="font-bold text-slate-200">#${prod.avg_position || '-'}</span>
-                        <div class="mt-1">${posDiffBadge}</div>
+                        <span class="text-slate-500 block text-[10px]">Precio Final Prom.</span>
+                        <span class="font-bold text-emerald-400">$${Number(m.avg_final_price || 0).toLocaleString()}</span>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Final Promedio</span>
-                        <span class="font-bold text-emerald-400">$${Number(prod.avg_final_price || 0).toLocaleString()}</span>
-                        <div class="mt-1">${priceDiffBadge}</div>
+                        <span class="text-slate-500 block text-[10px]">SKUs con Descuento</span>
+                        <span class="font-bold text-amber-400">${m.promo_skus || 0}</span>
                     </div>
                     <div>
-                        <span class="text-slate-500 block text-[10px]">Precio Lista Promedio</span>
-                        <span class="font-bold text-slate-300">$${Number(prod.avg_price || 0).toLocaleString()}</span>
-                    </div>
-                    <div>
-                        <span class="text-slate-500 block text-[10px]">Total Registros</span>
-                        <span class="font-bold text-slate-200">${prod.total_skus || 0}</span>
+                        <span class="text-slate-500 block text-[10px]">Agotados (OOS)</span>
+                        <span class="font-bold text-rose-400">${m.oos_skus || 0}</span>
                     </div>
                 </div>
             `;
@@ -412,10 +300,7 @@
             }
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
-            loadDashboardData();
-            loadFilterOptions();
-        });
+        document.addEventListener('DOMContentLoaded', loadDashboardData);
     </script>
 </body>
 </html>
