@@ -152,9 +152,12 @@ class FarmatodoScraper:
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
+                # Determinar la posición que verá el usuario
+                assigned_position = valid_position
+
                 product = ExtractedProductData(
                     search_keyword=search_term,
-                    search_position=valid_position,
+                    search_position=assigned_position,
                     title=title,
                     brand=final_brand,
                     base_price=base_price,
@@ -162,7 +165,11 @@ class FarmatodoScraper:
                     in_stock=in_stock
                 )
                 parsed_results.append(product)
-                valid_position += 1
+
+                # SOLO incrementamos la posición si el producto estaba DISPONIBLE en la góndola visual
+                if in_stock:
+                    valid_position += 1
+
             except Exception as e:
                 print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
                 continue
