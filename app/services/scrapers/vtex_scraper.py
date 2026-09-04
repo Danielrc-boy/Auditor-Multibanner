@@ -15,6 +15,7 @@ try:
 except ModuleNotFoundError:
     from app.models.schemas import ExtractedProductData
 
+
 class VTEXScraper:
     def __init__(self, retailer: str = "exito", base_url: str = "https://www.exito.com"):
         self.retailer = retailer
@@ -163,3 +164,26 @@ class VTEXScraper:
                 )
             )
         return parsed
+
+
+# ==============================================================================
+# FUNCIONES RUNNER EXPORTADAS (Requeridas por el orquestador principal del backend)
+# ==============================================================================
+
+async def run_vtex_scraping(keyword: str, retailer: str = "exito", base_url: str = "https://www.exito.com", limit: int = 50) -> List[ExtractedProductData]:
+    """Runner asíncrono primario llamado por FastAPI / Celery / BackgroundTasks."""
+    try:
+        scraper = VTEXScraper(retailer=retailer, base_url=base_url)
+        return await scraper.search_keyword(keyword=keyword, limit=limit)
+    except Exception as e:
+        print(f"[RUNNER ERROR] Error ejecutando VTEX Scraper para '{keyword}': {e}", flush=True)
+        return []
+
+def run_vtex_scraping_sync(keyword: str, retailer: str = "exito", base_url: str = "https://www.exito.com", limit: int = 50) -> List[ExtractedProductData]:
+    """Runner síncrono fallback si el orquestador no usa async/await."""
+    import asyncio
+    try:
+        return asyncio.run(run_vtex_scraping(keyword=keyword, retailer=retailer, base_url=base_url, limit=limit))
+    except Exception as e:
+        print(f"[RUNNER SYNC ERROR] VTEX Scraper: {e}", flush=True)
+        return []
