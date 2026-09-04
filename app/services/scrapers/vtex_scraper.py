@@ -18,14 +18,18 @@ class ExtractedProductData(BaseModel):
 class VTEXScraper:
     def __init__(self, retailer: str, base_url: str):
         self.retailer = retailer.lower()
-        self.base_url = base_url.rstrip("/")
+        # Garantizar que la base_url siempre tenga esquema https://
+        url = base_url.strip().rstrip("/")
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = f"https://{url}"
+        self.base_url = url
         self.scraper_api_key = os.getenv("SCRAPERAPI_KEY") or os.getenv("SCRAPER_API_KEY")
 
     def _build_url(self, target_url: str) -> str:
-        """Pasa la petición por ScraperAPI para evitar el bloqueo 403."""
+        """Enruta la petición a través de ScraperAPI con encoding seguro."""
         if self.scraper_api_key:
             encoded_target = urllib.parse.quote(target_url, safe="")
-            return f"http://api.scraperapi.com?api_key={self.scraper_api_key}&url={encoded_target}"
+            return f"http://api.scraperapi.com?api_key={self.scraper_api_key.strip()}&url={encoded_target}"
         return target_url
 
     def _get_headers(self) -> dict:
@@ -37,26 +41,26 @@ class VTEXScraper:
             ),
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
-            "Referer": f"{self.base_url}/",
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
         extracted_products: List[ExtractedProductData] = []
-        encoded_keyword = urllib.parse.quote(keyword)
+        clean_keyword = keyword.strip()
+        encoded_keyword = urllib.parse.quote(clean_keyword)
 
-        # RUTA CORREGIDA: Usamos Intelligent Search v2 (Es la misma API que usa el Front de la Web de Éxito/Carulla)
+        # Target 1: Intelligent Search v2 (el motor comercial visual)
         target_endpoint = (
             f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{encoded_keyword}"
-            f"?page=1&count={limit}&sort=relevance:desc"
+            f"?page=1&count={limit}&query={encoded_keyword}&locale=es-CO"
         )
         
         final_url = self._build_url(target_endpoint)
 
-        async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
             try:
                 response = await client.get(final_url, headers=self._get_headers())
 
-                # Fallback a la API de catálogo en caso de que Intelligent Search devuelva un código distinto a 200
+                # Target 2 (Fallback): Catalog API /io/ si el endpoint v2 no devuelve 200
                 if response.status_code != 200:
                     fallback_endpoint = (
                         f"{self.base_url}/io/api/catalog_system/pub/products/search/{encoded_keyword}"
@@ -66,12 +70,12 @@ class VTEXScraper:
                     response = await client.get(final_url, headers=self._get_headers())
 
                 if response.status_code != 200:
-                    print(f"[{self.retailer.upper()} ERROR] HTTP Status {response.status_code} para '{keyword}'", flush=True)
+                    print(f"[{self.retailer.upper()} ERROR] HTTP Status {response.status_code} para '{clean_keyword}'", flush=True)
                     return []
 
                 raw_data = response.json()
                 
-                # Intelligent Search estructura los productos dentro de "products"
+                # Normalizar la estructura según el endpoint que haya respondido
                 if isinstance(raw_data, dict):
                     items_list = raw_data.get("products", [])
                 else:
@@ -109,11 +113,9 @@ class VTEXScraper:
                                 in_stock = qty > 0 if qty is not None else True
 
                         if title:
-                            # Solo incrementamos la posición visible si el producto está disponible o
-                            # si queremos auditar exactamente el orden de la tienda física/virtual
                             extracted_products.append(
                                 ExtractedProductData(
-                                    search_keyword=keyword,
+                                    search_keyword=clean_keyword,
                                     search_position=visible_position,
                                     title=title.strip(),
                                     brand=str(brand).strip(),
@@ -122,13 +124,15 @@ class VTEXScraper:
                                     in_stock=in_stock,
                                 )
                             )
-                            visible_position += 1
+                            # Incremento directo alineado con la parrilla visual
+                            if in_stock:
+                                visible_position += 1
 
                     except Exception as parse_err:
                         continue
 
             except Exception as req_err:
-                print(f"[{self.retailer.upper()} REQUEST ERROR] '{keyword}': {req_err}", flush=True)
+                print(f"[{self.retailer.upper()} REQUEST ERROR] '{clean_keyword}': {req_err}", flush=True)
                 return []
 
         return extracted_products
