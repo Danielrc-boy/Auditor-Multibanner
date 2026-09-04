@@ -1,8 +1,19 @@
 import os
 import re
+import sys
 import unicodedata
 import httpx
-from app.services.scrapers.vtex_scraper import ExtractedProductData
+from pathlib import Path
+
+# Resolvemos la importación dinámicamente
+root_path = Path(__file__).resolve().parent.parent.parent.parent
+if str(root_path) not in sys.path:
+    sys.path.insert(0, str(root_path))
+
+try:
+    from app.schemas import ExtractedProductData
+except ModuleNotFoundError:
+    from app.models.schemas import ExtractedProductData
 
 FARMATODO_ALGOLIA_URL = os.getenv("FARMATODO_ALGOLIA_URL", "https://api-search.farmatodo.com/1/indexes/*/queries")
 FARMATODO_APP_ID = os.getenv("ALGOLIA_APP_ID", "VCOJEYD2PO")
@@ -35,7 +46,6 @@ class FarmatodoScraper:
     async def search_keyword(self, keyword: str, limit: int = 50):
         clean_term = normalize_text(keyword)
         
-        # Estructura corregida: pasamos 'query' explícitamente a Algolia
         payload = {
             "requests": [
                 {
@@ -101,7 +111,6 @@ class FarmatodoScraper:
 
     def _extract_prices(self, item: dict) -> tuple[float, float | None]:
         raw_price_obj = item.get("price")
-        
         base_price = 0.0
         offer_price = None
 
@@ -111,25 +120,6 @@ class FarmatodoScraper:
         else:
             base_price = self._safe_float(item.get("fullPrice") or item.get("price") or item.get("originalPrice") or item.get("regularPrice")) or 0.0
             offer_price = self._safe_float(item.get("offerPrice") or item.get("priceWithDiscount") or item.get("discountPrice") or item.get("finalPrice") or item.get("specialPrice"))
-
-        if not offer_price:
-            promos = item.get("promotions") or item.get("discounts") or item.get("offers")
-            if isinstance(promos, list) and len(promos) > 0:
-                first_promo = promos[0]
-                if isinstance(first_promo, dict):
-                    offer_price = self._safe_float(first_promo.get("price") or first_promo.get("offerPrice") or first_promo.get("specialPrice"))
-                    
-                    if not offer_price and base_price > 0:
-                        pct = self._safe_float(first_promo.get("percent") or first_promo.get("percentage") or first_promo.get("value"))
-                        if pct:
-                            pct_val = pct / 100.0 if pct > 1 else pct
-                            offer_price = round(base_price * (1.0 - pct_val), 2)
-
-        if not offer_price and base_price > 0:
-            pct = self._safe_float(item.get("discountPercent") or item.get("discount_percent") or item.get("percentage") or item.get("discount"))
-            if pct:
-                pct_val = pct / 100.0 if pct > 1 else pct
-                offer_price = round(base_price * (1.0 - pct_val), 2)
 
         discount_price = None
         if offer_price and 0 < offer_price < base_price:
@@ -154,13 +144,6 @@ class FarmatodoScraper:
                 final_brand = self._extract_brand(item, title)
                 base_price, discount_price = self._extract_prices(item)
 
-                # Extracción de descripción en Algolia/Farmatodo
-                description = (
-                    item.get("description") or
-                    item.get("long_description") or
-                    item.get("meta_description")
-                )
-
                 is_out_of_store = bool(item.get("outofstore", False))
                 in_stock = not is_out_of_store
 
@@ -169,10 +152,10 @@ class FarmatodoScraper:
                     search_position=valid_position,
                     title=title,
                     brand=final_brand,
-                    description=description,
                     base_price=base_price,
                     discount_price=discount_price,
-                    in_stock=in_stock
+                    in_stock=in_stock,
+                    seller_name="Farmatodo"
                 )
                 parsed_results.append(product)
                 valid_position += 1

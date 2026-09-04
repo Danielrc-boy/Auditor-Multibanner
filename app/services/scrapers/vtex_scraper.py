@@ -1,14 +1,34 @@
+import sys
 import json
 import urllib.parse
 import httpx
+from pathlib import Path
 from typing import List, Dict, Any
-from app.models.schemas import ExtractedProductData
+
+# Resolvemos la importación de ExtractedProductData dinámicamente para evitar fallas
+root_path = Path(__file__).resolve().parent.parent.parent.parent
+if str(root_path) not in sys.path:
+    sys.path.insert(0, str(root_path))
+
+try:
+    from app.schemas import ExtractedProductData
+except ModuleNotFoundError:
+    from app.models.schemas import ExtractedProductData
 
 class VTEXScraper:
-    # ... (mantener inicialización de la clase y _build_request)
+    def __init__(self, retailer: str = "exito", base_url: str = "https://www.exito.com"):
+        self.retailer = retailer
+        self.base_url = base_url.rstrip("/")
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json"
+        }
+
+    def _build_request(self, url: str, params: dict | None) -> tuple[str, dict | None]:
+        return url, params
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        # Payload alineado 1:1 con la Web UI de FastStore VTEX (sin 'after' ruidoso)
+        # Payload idéntico a la UI de FastStore VTEX
         variables_payload = {
             "first": limit,
             "sort": "score_desc",
@@ -59,35 +79,87 @@ class VTEXScraper:
 
         return []
 
+    def _parse_graphql_response(self, data: dict, keyword: str) -> List[ExtractedProductData]:
+        parsed = []
+        try:
+            products = data.get("data", {}).get("search", {}).get("products", {}).get("edges", [])
+            for index, item in enumerate(products, start=1):
+                prod = self._parse_graphql_product(item, index, keyword)
+                if prod:
+                    parsed.append(prod)
+        except Exception as e:
+            print(f"[PARSER ERROR] {self.retailer.upper()} GraphQL: {e}", flush=True)
+        return parsed
+
     def _parse_graphql_product(self, item: Dict[Any, Any], position: int, keyword: str) -> ExtractedProductData:
-        """Extrae de forma robusta precios normales, con descuento y posición."""
         node = item.get("node", item)
+        title = node.get("name") or node.get("productName", "")
+        brand = node.get("brand", {}).get("name", "") if isinstance(node.get("brand"), dict) else node.get("brand", "Sin Marca")
         
-        name = node.get("name") or node.get("productName", "")
-        brand = node.get("brand", {}).get("name", "") if isinstance(node.get("brand"), dict) else node.get("brand", "")
-        
-        # Extracción de Oferta y Precios
         offers = node.get("offers", {}).get("offers", [])
-        original_price = 0.0
-        discount_price = 0.0
-        
+        base_price = 0.0
+        discount_price = None
+        seller_name = "Sin Vendedor"
+        in_stock = True
+
         if offers:
             main_offer = offers[0]
-            # Price es el precio final de venta (con descuento si aplica)
-            discount_price = float(main_offer.get("price", 0.0))
-            # listPrice es el precio base sin descuento
-            original_price = float(main_offer.get("listPrice", discount_price))
+            curr_discount = float(main_offer.get("price", 0.0))
+            curr_base = float(main_offer.get("listPrice", curr_discount))
+            seller_name = main_offer.get("seller", {}).get("identifier", "Éxito/Carulla")
             
-            # Si no hay descuento real, el precio con descuento coincide con el original
-            if discount_price >= original_price:
-                discount_price = original_price
+            if curr_discount < curr_base and curr_discount > 0:
+                base_price = curr_base
+                discount_price = curr_discount
+            else:
+                base_price = curr_base if curr_base > 0 else curr_discount
 
         return ExtractedProductData(
+            search_keyword=keyword,
             search_position=position,
-            search_term=keyword,
-            product_name=name,
-            brand=brand,
-            original_price=original_price,
+            title=title,
+            brand=brand if brand else "Sin Marca",
+            base_price=base_price,
             discount_price=discount_price,
-            retailer=self.retailer
+            in_stock=in_stock,
+            seller_name=seller_name
         )
+
+    def _parse_intelligent_search(self, products_raw: list, keyword: str, limit: int) -> List[ExtractedProductData]:
+        parsed = []
+        for index, prod in enumerate(products_raw[:limit], start=1):
+            title = prod.get("productName", "")
+            brand = prod.get("brand", "Sin Marca")
+            items = prod.get("items", [])
+            
+            base_price = 0.0
+            discount_price = None
+            seller_name = "Sin Vendedor"
+
+            if items:
+                sellers = items[0].get("sellers", [])
+                if sellers:
+                    comm_offer = sellers[0].get("commertialOffer", {})
+                    curr_discount = float(comm_offer.get("Price", 0.0))
+                    curr_base = float(comm_offer.get("ListPrice", curr_discount))
+                    seller_name = sellers[0].get("sellerName", "Sin Vendedor")
+
+                    if curr_discount < curr_base and curr_discount > 0:
+                        base_price = curr_base
+                        discount_price = curr_discount
+                    else:
+                        base_price = curr_base if curr_base > 0 else curr_discount
+
+            parsed.append(
+                ExtractedProductData(
+                    search_keyword=keyword,
+                    search_position=index,
+                    title=title,
+                    brand=brand,
+                    base_price=base_price,
+                    discount_price=discount_price,
+                    in_stock=True,
+                    seller_name=seller_name
+                )
+            )
+        return parsed
