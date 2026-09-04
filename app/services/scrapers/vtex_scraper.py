@@ -4,6 +4,8 @@ from typing import List, Optional
 import httpx
 from pydantic import BaseModel
 
+SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
+
 
 class ExtractedProductData(BaseModel):
     search_keyword: str
@@ -18,75 +20,59 @@ class ExtractedProductData(BaseModel):
 class VTEXScraper:
     def __init__(self, retailer: str, base_url: str):
         self.retailer = retailer.lower()
-        # Garantizar que la base_url siempre tenga esquema https://
-        url = base_url.strip().rstrip("/")
-        if not url.startswith("http://") and not url.startswith("https://"):
-            url = f"https://{url}"
-        self.base_url = url
-        self.scraper_api_key = os.getenv("SCRAPERAPI_KEY") or os.getenv("SCRAPER_API_KEY")
-
-    def _build_url(self, target_url: str) -> str:
-        """Enruta la petición a través de ScraperAPI con encoding seguro."""
-        if self.scraper_api_key:
-            encoded_target = urllib.parse.quote(target_url, safe="")
-            return f"http://api.scraperapi.com?api_key={self.scraper_api_key.strip()}&url={encoded_target}"
-        return target_url
-
-    def _get_headers(self) -> dict:
-        return {
+        self.base_url = base_url.rstrip("/")
+        self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/123.0.0.0 Safari/537.36"
+                "Chrome/122.0.0.0 Safari/537.36"
             ),
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "es-CO,es;q=0.9,en;q=0.8",
         }
 
+    def _build_request(self, target_url: str):
+        """Enruta la petición a través de ScraperAPI si hay una key configurada."""
+        if SCRAPERAPI_KEY:
+            return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": target_url}
+        return target_url, None
+
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        extracted_products: List[ExtractedProductData] = []
-        clean_keyword = keyword.strip()
-        encoded_keyword = urllib.parse.quote(clean_keyword)
+        encoded_keyword = urllib.parse.quote(keyword)
 
-        # Target 1: Intelligent Search v2 (el motor comercial visual)
-        target_endpoint = (
-            f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{encoded_keyword}"
-            f"?page=1&count={limit}&query={encoded_keyword}&locale=es-CO"
+        # Ruta verificada con evidencia real (con /io/ delante) — sin esto, Éxito/Carulla
+        # responden 403/406 detrás de su protección Cloudflare.
+        target_url = (
+            f"{self.base_url}/io/api/catalog_system/pub/products/search/{encoded_keyword}"
+            f"?_from=0&_to={limit - 1}"
         )
-        
-        final_url = self._build_url(target_endpoint)
+        request_url, params = self._build_request(target_url)
 
-        async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
+        extracted_products: List[ExtractedProductData] = []
+
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=False) as client:
             try:
-                response = await client.get(final_url, headers=self._get_headers())
+                response = await client.get(request_url, headers=self.headers, params=params)
 
-                # Target 2 (Fallback): Catalog API /io/ si el endpoint v2 no devuelve 200
-                if response.status_code != 200:
-                    fallback_endpoint = (
-                        f"{self.base_url}/io/api/catalog_system/pub/products/search/{encoded_keyword}"
-                        f"?_from=0&_to={limit - 1}"
+                if response.status_code not in (200, 206):
+                    fallback_target = (
+                        f"{self.base_url}/io/api/io/_v/api/intelligent-search/product_search/{encoded_keyword}"
+                        f"?page=1&count={limit}"
                     )
-                    final_url = self._build_url(fallback_endpoint)
-                    response = await client.get(final_url, headers=self._get_headers())
+                    fb_url, fb_params = self._build_request(fallback_target)
+                    response = await client.get(fb_url, headers=self.headers, params=fb_params)
 
-                if response.status_code != 200:
-                    print(f"[{self.retailer.upper()} ERROR] HTTP Status {response.status_code} para '{clean_keyword}'", flush=True)
+                if response.status_code not in (200, 206):
+                    print(f"[{self.retailer.upper()} ERROR] HTTP Status {response.status_code} para '{keyword}'")
                     return []
 
                 raw_data = response.json()
-                
-                # Normalizar la estructura según el endpoint que haya respondido
-                if isinstance(raw_data, dict):
-                    items_list = raw_data.get("products", [])
-                else:
-                    items_list = raw_data
-
+                items_list = raw_data.get("products", raw_data) if isinstance(raw_data, dict) else raw_data
                 if not isinstance(items_list, list):
                     return []
 
-                visible_position = 1
-
-                for product in items_list:
+                position_counter = 1
+                for product in items_list[:limit]:
                     try:
                         title = product.get("productName") or product.get("productTitle") or ""
                         brand = product.get("brand") or "Sin Marca"
@@ -96,27 +82,29 @@ class VTEXScraper:
                         in_stock = True
 
                         items = product.get("items", [])
-                        if items and len(items) > 0:
+                        if items:
                             sellers = items[0].get("sellers", [])
-                            if sellers and len(sellers) > 0:
+                            if sellers:
                                 offer = sellers[0].get("commertialOffer", {})
-                                list_p = float(offer.get("ListPrice", 0.0) or 0.0)
-                                price_p = float(offer.get("Price", 0.0) or 0.0)
+                                base_price = float(offer.get("ListPrice", 0.0) or offer.get("Price", 0.0))
+                                current_price = float(offer.get("Price", 0.0))
+                                if 0 < current_price < base_price:
+                                    discount_price = current_price
+                                elif base_price == 0 and current_price > 0:
+                                    base_price = current_price
+                                available_qty = offer.get("AvailableQuantity", 0)
+                                in_stock = (available_qty or 0) > 0
 
-                                if price_p < list_p and price_p > 0:
-                                    base_price = list_p
-                                    discount_price = price_p
-                                else:
-                                    base_price = price_p if price_p > 0 else list_p
-
-                                qty = offer.get("AvailableQuantity", 0)
-                                in_stock = qty > 0 if qty is not None else True
+                        # Igual que en Farmatodo: solo numeramos posición sobre
+                        # productos disponibles, como los ve un comprador real.
+                        if not in_stock:
+                            continue
 
                         if title:
                             extracted_products.append(
                                 ExtractedProductData(
-                                    search_keyword=clean_keyword,
-                                    search_position=visible_position,
+                                    search_keyword=keyword,
+                                    search_position=position_counter,
                                     title=title.strip(),
                                     brand=str(brand).strip(),
                                     base_price=base_price,
@@ -124,15 +112,13 @@ class VTEXScraper:
                                     in_stock=in_stock,
                                 )
                             )
-                            # Incremento directo alineado con la parrilla visual
-                            if in_stock:
-                                visible_position += 1
-
+                            position_counter += 1
                     except Exception as parse_err:
+                        print(f"[{self.retailer.upper()} PARSE ERROR]: {parse_err}")
                         continue
 
             except Exception as req_err:
-                print(f"[{self.retailer.upper()} REQUEST ERROR] '{clean_keyword}': {req_err}", flush=True)
+                print(f"[{self.retailer.upper()} REQUEST ERROR] '{keyword}': {req_err}")
                 return []
 
         return extracted_products
