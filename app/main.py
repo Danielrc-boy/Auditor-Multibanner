@@ -85,6 +85,38 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
     return saved_count
 
 
+async def run_vtex_scraping_job(conn, retailer_name: str, base_url: str):
+    search_configs = []
+    with conn.cursor() as cur:
+        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
+        rows = cur.fetchall()
+        search_configs = [r["search_term"] for r in rows] if rows else []
+        
+    if not search_configs:
+        print(f"[{retailer_name.upper()} SCRAPING] No hay términos activos.", flush=True)
+        return 0
+
+    total_saved = 0
+    from app.services.scrapers.vtex_scraper import VTEXScraper
+
+    print(f"\n[SCRAPING] Iniciando extracción para: {retailer_name.upper()}", flush=True)
+    scraper = VTEXScraper(retailer=retailer_name, base_url=base_url)
+
+    for term in search_configs:
+        try:
+            results = await scraper.search_keyword(term, limit=50)
+            if results:
+                count = save_scraper_results(conn, results, retailer=retailer_name)
+                total_saved += count
+                print(f"[{retailer_name.upper()}] Guardados {count} para '{term}'.", flush=True)
+            else:
+                print(f"[{retailer_name.upper()}] Sin resultados para '{term}'.", flush=True)
+        except Exception as e:
+            print(f"[SCRAPING ERROR] {retailer_name.upper()} '{term}': {e}", flush=True)
+
+    return total_saved
+
+
 async def run_farmatodo_scraping(conn):
     search_configs = []
     with conn.cursor() as cur:
@@ -142,20 +174,31 @@ async def run_rappi_scraping(conn):
 
 async def run_all_scraping(conn):
     total_records = 0
+    
+    # 1. ÉXITO (VTEX)
     try:
-        from app.services.scrapers.vtex_scraper import run_vtex_scraping
-
-        total_records += await run_vtex_scraping(conn)
+        total_records += await run_vtex_scraping_job(conn, retailer_name="exito", base_url="https://www.exito.com")
     except Exception as e:
-        print(f"[MAIN ERROR] VTEX Scraper: {e}", flush=True)
+        print(f"[MAIN ERROR] Éxito Scraper: {e}", flush=True)
+
+    # 2. CARULLA (VTEX)
+    try:
+        total_records += await run_vtex_scraping_job(conn, retailer_name="carulla", base_url="https://www.carulla.com")
+    except Exception as e:
+        print(f"[MAIN ERROR] Carulla Scraper: {e}", flush=True)
+
+    # 3. FARMATODO
     try:
         total_records += await run_farmatodo_scraping(conn)
     except Exception as e:
         print(f"[MAIN ERROR] Farmatodo Scraper: {e}", flush=True)
+
+    # 4. RAPPI
     try:
         total_records += await run_rappi_scraping(conn)
     except Exception as e:
         print(f"[MAIN ERROR] Rappi Scraper: {e}", flush=True)
+
     return total_records
 
 
