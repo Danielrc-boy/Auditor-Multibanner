@@ -19,26 +19,35 @@ class VTEXScraper:
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
+    # VTEX maneja rangos desde 0 hasta (limit - 1) para obtener la cantidad exacta
+    vtex_params = {
+        "_from": 0,
+        "_to": limit - 1
+    }
+
+    if SCRAPERAPI_KEY:
+        # Si usas ScraperAPI, codificamos los parámetros en la URL de destino
+        query_string = "&".join([f"{k}={v}" for k, v in vtex_params.items()])
+        target_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}?{query_string}"
+        
+        request_url = "http://api.scraperapi.com/"
+        params = {"api_key": SCRAPERAPI_KEY, "url": target_url}
+    else:
         target_url = f"{self.base_url}/io/api/catalog_system/pub/products/search/{keyword}"
+        request_url = target_url
+        params = vtex_params
 
-        if SCRAPERAPI_KEY:
-            request_url = "http://api.scraperapi.com/"
-            params = {"api_key": SCRAPERAPI_KEY, "url": target_url}
-        else:
-            request_url = target_url
-            params = None
-
-        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
-            try:
-                response = await client.get(request_url, headers=self.headers, params=params)
-                if response.status_code not in (200, 206):
-                    print(f"[ERROR {self.retailer.upper()}] Status {response.status_code}", flush=True)
-                    return []
-                raw_products = response.json()
-                return self._parse_products(raw_products, keyword, limit)
-            except Exception as e:
-                print(f"[ERROR {self.retailer.upper()}] Error al scrapear '{keyword}': {e}", flush=True)
+    async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
+        try:
+            response = await client.get(request_url, headers=self.headers, params=params)
+            if response.status_code not in (200, 206):
+                print(f"[ERROR {self.retailer.upper()}] Status {response.status_code}", flush=True)
                 return []
+            raw_products = response.json()
+            return self._parse_products(raw_products, keyword, limit)
+        except Exception as e:
+            print(f"[ERROR {self.retailer.upper()}] Error al scrapeare '{keyword}': {e}", flush=True)
+            return []
 
     def _parse_products(self, raw_products: list, search_term: str, limit: int) -> List[ExtractedProductData]:
         parsed = []
