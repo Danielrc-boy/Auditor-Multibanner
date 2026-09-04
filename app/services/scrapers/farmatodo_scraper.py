@@ -15,12 +15,14 @@ KNOWN_BRANDS = [
     "Gillette", "Colgate", "Sensodyne", "Neutrogena", "Cetaphil"
 ]
 
+
 def normalize_text(text: str) -> str:
     if not text:
         return ""
     text = unicodedata.normalize('NFD', text)
     text = re.sub(r'[\u0300-\u036f]', '', text)
     return text.lower().strip()
+
 
 class FarmatodoScraper:
     def __init__(self):
@@ -32,63 +34,53 @@ class FarmatodoScraper:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
 
-    async def search_keyword(self, keyword: str, limit: int = 50):
-        clean_term = normalize_text(keyword)
-        
-        # Estructura corregida: pasamos 'query' explícitamente a Algolia
+    async def search_keyword(self, search_term: str, limit: int = 50) -> list:
+        clean_term = search_term.strip()
+
         payload = {
             "requests": [
                 {
-                    "indexName": FARMATODO_INDEX_NAME.strip(),
+                    "indexName": FARMATODO_INDEX_NAME,
                     "query": clean_term,
-                    "params": f"hitsPerPage={limit}&page=0"
+                    "hitsPerPage": limit
                 }
             ]
         }
-
-        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(self.endpoint, headers=self.headers, json=payload)
-                if response.status_code != 200:
-                    print(f"[ERROR FARMATODO] Status {response.status_code} al consultar Algolia", flush=True)
-                    return []
-                
+                response.raise_for_status()
                 data = response.json()
+
                 results = data.get("results", [])
                 if not results:
                     return []
 
-                raw_hits = results[0].get("hits", [])
-                return self._parse_products(raw_hits[:limit], keyword)
-
+                hits = results[0].get("hits", [])
+                return self._parse_products(hits, clean_term)
             except Exception as e:
                 print(f"[ERROR FARMATODO] Error al scrapear '{clean_term}': {e}", flush=True)
                 return []
 
     def _extract_brand(self, item: dict, title: str) -> str:
         raw_brand = item.get("brandName") or item.get("marca") or item.get("brand_name")
-        
+
         if isinstance(raw_brand, dict):
             raw_brand = raw_brand.get("name") or raw_brand.get("label")
         elif isinstance(raw_brand, list) and len(raw_brand) > 0:
             raw_brand = raw_brand[0]
-
         brand_str = str(raw_brand).strip() if raw_brand else ""
         is_code_brand = bool(re.search(r'\d', brand_str) and '-' in brand_str) or brand_str.startswith("2008")
-
         first_word_of_title = title.split()[0] if title else ""
         is_title_word_copy = brand_str.lower() == first_word_of_title.lower()
-
         if brand_str and brand_str.lower() not in ["none", "null", "sin marca"] and not is_code_brand and not is_title_word_copy:
             return brand_str
-
         for brand in KNOWN_BRANDS:
             if re.search(rf'\b{brand}\b', title, re.IGNORECASE):
                 return brand
-
         return "Sin Marca"
 
-    def _safe_float(self, val) -> float | None:
+    def _safe_float(self, val):
         if val is None or val == "":
             return None
         try:
@@ -99,12 +91,11 @@ class FarmatodoScraper:
         except (ValueError, TypeError):
             return None
 
-    def _extract_prices(self, item: dict) -> tuple[float, float | None]:
+    def _extract_prices(self, item: dict):
         raw_price_obj = item.get("price")
-        
+
         base_price = 0.0
         offer_price = None
-
         if isinstance(raw_price_obj, dict):
             base_price = self._safe_float(raw_price_obj.get("base") or raw_price_obj.get("full") or raw_price_obj.get("regular")) or 0.0
             offer_price = self._safe_float(raw_price_obj.get("offer") or raw_price_obj.get("discount") or raw_price_obj.get("special"))
@@ -118,7 +109,6 @@ class FarmatodoScraper:
                 first_promo = promos[0]
                 if isinstance(first_promo, dict):
                     offer_price = self._safe_float(first_promo.get("price") or first_promo.get("offerPrice") or first_promo.get("specialPrice"))
-                    
                     if not offer_price and base_price > 0:
                         pct = self._safe_float(first_promo.get("percent") or first_promo.get("percentage") or first_promo.get("value"))
                         if pct:
@@ -140,7 +130,7 @@ class FarmatodoScraper:
 
         return base_price, discount_price
 
-        def _parse_products(self, raw_hits: list, search_term: str) -> list:
+    def _parse_products(self, raw_hits: list, search_term: str) -> list:
         parsed_results = []
         valid_position = 1
         for item in raw_hits:
@@ -152,7 +142,6 @@ class FarmatodoScraper:
 
                 final_brand = self._extract_brand(item, title)
 
-                # Filtro de relevancia — excluye resultados que no mencionan el término buscado
                 term_normalized = normalize_text(search_term)
                 title_normalized = normalize_text(title)
                 brand_normalized = normalize_text(final_brand)
@@ -177,10 +166,4 @@ class FarmatodoScraper:
             except Exception as e:
                 print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
                 continue
-        return parsed_results
-
-            except Exception as e:
-                print(f"[PARSER ERROR] FARMATODO: {e}", flush=True)
-                continue
-
         return parsed_results
