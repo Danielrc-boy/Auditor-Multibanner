@@ -14,7 +14,8 @@ import {
   CheckCircle, 
   XCircle, 
   TrendingDown,
-  Trash2
+  Trash2,
+  Tag
 } from "lucide-react";
 
 interface Retailer {
@@ -40,6 +41,7 @@ interface ScraperResult {
   search_term: string;
   product_name: string;
   brand?: string | null;
+  seller_name?: string | null; // <--- AGREGADO
   position: number;
   price: number;
   discount_price: number | null;
@@ -76,10 +78,10 @@ export default function Dashboard() {
       const dataRetailers: Retailer[] = await resRetailers.json();
       const dataConfigs: MonitoringConfig[] = await resConfigs.json();
 
-      setRetailers(dataRetailers);
-      setConfigs(dataConfigs);
+      setRetailers(Array.isArray(dataRetailers) ? dataRetailers : []);
+      setConfigs(Array.isArray(dataConfigs) ? dataConfigs : []);
 
-      if (dataRetailers.length > 0 && !selectedRetailerId) {
+      if (Array.isArray(dataRetailers) && dataRetailers.length > 0 && !selectedRetailerId) {
         setSelectedRetailerId(dataRetailers[0].id);
       }
     } catch (err) {
@@ -94,14 +96,22 @@ export default function Dashboard() {
       const queryParams = new URLSearchParams();
       if (filterRetailer) queryParams.append("retailer", filterRetailer);
       if (filterSearchTerm) queryParams.append("search_term", filterSearchTerm);
-      if (filterDateFrom) queryParams.append("date_from", new Date(filterDateFrom).toISOString());
-      if (filterDateTo) queryParams.append("date_to", new Date(filterDateTo).toISOString());
+      
+      // Manejo seguro de fechas para evitar desfase UTC o Invalid Date
+      if (filterDateFrom) {
+        const dFrom = new Date(`${filterDateFrom}T00:00:00`);
+        if (!isNaN(dFrom.getTime())) queryParams.append("date_from", dFrom.toISOString());
+      }
+      if (filterDateTo) {
+        const dTo = new Date(`${filterDateTo}T23:59:59`);
+        if (!isNaN(dTo.getTime())) queryParams.append("date_to", dTo.toISOString());
+      }
       queryParams.append("limit", "200");
 
       const res = await fetch(`${API_URL}/results?${queryParams.toString()}`);
       if (!res.ok) throw new Error("Error al obtener los resultados.");
       const data = await res.json();
-      setResults(data);
+      setResults(Array.isArray(data) ? data : []);
     } catch (err: any) {
       setErrorResults(err.message || "Error al cargar los datos");
     } finally {
@@ -182,8 +192,8 @@ export default function Dashboard() {
       const queryParams = new URLSearchParams();
       if (filterRetailer) queryParams.append("retailer", filterRetailer);
       if (filterSearchTerm) queryParams.append("search_term", filterSearchTerm);
-      if (filterDateFrom) queryParams.append("date_from", new Date(filterDateFrom).toISOString());
-      if (filterDateTo) queryParams.append("date_to", new Date(filterDateTo).toISOString());
+      if (filterDateFrom) queryParams.append("date_from", new Date(`${filterDateFrom}T00:00:00`).toISOString());
+      if (filterDateTo) queryParams.append("date_to", new Date(`${filterDateTo}T23:59:59`).toISOString());
 
       const res = await fetch(`${API_URL}/export?${queryParams.toString()}`);
       if (!res.ok) throw new Error("No fue posible generar el reporte Excel.");
@@ -459,6 +469,7 @@ export default function Dashboard() {
               <thead className="bg-slate-900 text-slate-400 text-xs uppercase font-semibold border-b border-slate-700">
                 <tr>
                   <th className="px-4 py-3">Retailer</th>
+                  <th className="px-4 py-3">Vendedor</th> {/* NUEVA COLUMNA */}
                   <th className="px-4 py-3">Término</th>
                   <th className="px-4 py-3">Pos.</th>
                   <th className="px-4 py-3">Marca</th>
@@ -473,14 +484,14 @@ export default function Dashboard() {
                 {loadingResults ? (
                   Array.from({ length: 4 }).map((_, i) => (
                     <tr key={i} className="animate-pulse">
-                      <td colSpan={9} className="px-4 py-4">
+                      <td colSpan={10} className="px-4 py-4">
                         <div className="h-4 bg-slate-700 rounded"></div>
                       </td>
                     </tr>
                   ))
                 ) : results.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
                       No hay resultados capturados para los filtros seleccionados.
                     </td>
                   </tr>
@@ -506,6 +517,9 @@ export default function Dashboard() {
                           <span className="px-2 py-1 bg-slate-900 rounded border border-slate-700 text-xs">
                             {row.retailer}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-blue-400 font-semibold">
+                          {row.seller_name || row.retailer}
                         </td>
                         <td className="px-4 py-3 text-slate-400">{row.search_term}</td>
                         <td className="px-4 py-3 font-semibold text-emerald-400">#{row.position}</td>
