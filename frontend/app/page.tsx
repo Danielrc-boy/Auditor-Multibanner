@@ -1,4 +1,6 @@
-import { DigitalShelfDashboard } from "../src/components/DigitalShelfDashboard";
+"use client";
+
+import Dashboard from "../src/components/DigitalShelfDashboard";
 
 export default function Home() {
   return (
@@ -13,7 +15,7 @@ export default function Home() {
           </p>
         </header>
 
-        <DigitalShelfDashboard />
+        <Dashboard />
       </div>
     </main>
   );
