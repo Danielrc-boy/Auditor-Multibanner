@@ -5,6 +5,7 @@ import httpx
 from pydantic import BaseModel
 
 SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
+print(f"[CONFIG CHECK] SCRAPERAPI_KEY cargada: {'SÍ (' + SCRAPERAPI_KEY[:6] + '...)' if SCRAPERAPI_KEY else 'NO - está vacía'}", flush=True)
 
 
 class ExtractedProductData(BaseModel):
