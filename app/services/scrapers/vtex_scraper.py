@@ -22,9 +22,9 @@ class VTEXScraper:
         self.scraper_api_key = os.getenv("SCRAPERAPI_KEY") or os.getenv("SCRAPER_API_KEY")
 
     def _build_url(self, target_url: str) -> str:
-        """Enruta la petición a través de ScraperAPI para evitar bloqueos 403 de Cloudflare."""
+        """Pasa la petición por ScraperAPI para evitar el bloqueo 403."""
         if self.scraper_api_key:
-            encoded_target = urllib.parse.quote(target_url)
+            encoded_target = urllib.parse.quote(target_url, safe="")
             return f"http://api.scraperapi.com?api_key={self.scraper_api_key}&url={encoded_target}"
         return target_url
 
@@ -44,30 +44,45 @@ class VTEXScraper:
         extracted_products: List[ExtractedProductData] = []
         encoded_keyword = urllib.parse.quote(keyword)
 
-        # Ruta confirmada con la estructura /io/ para VTEX
+        # RUTA CORREGIDA: Usamos Intelligent Search v2 (Es la misma API que usa el Front de la Web de Éxito/Carulla)
         target_endpoint = (
-            f"{self.base_url}/io/api/catalog_system/pub/products/search/{encoded_keyword}"
-            f"?_from=0&_to={limit - 1}"
+            f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{encoded_keyword}"
+            f"?page=1&count={limit}&sort=relevance:desc"
         )
         
         final_url = self._build_url(target_endpoint)
 
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
             try:
                 response = await client.get(final_url, headers=self._get_headers())
+
+                # Fallback a la API de catálogo en caso de que Intelligent Search devuelva un código distinto a 200
+                if response.status_code != 200:
+                    fallback_endpoint = (
+                        f"{self.base_url}/io/api/catalog_system/pub/products/search/{encoded_keyword}"
+                        f"?_from=0&_to={limit - 1}"
+                    )
+                    final_url = self._build_url(fallback_endpoint)
+                    response = await client.get(final_url, headers=self._get_headers())
 
                 if response.status_code != 200:
                     print(f"[{self.retailer.upper()} ERROR] HTTP Status {response.status_code} para '{keyword}'", flush=True)
                     return []
 
                 raw_data = response.json()
-                items_list = raw_data.get("products", raw_data) if isinstance(raw_data, dict) else raw_data
+                
+                # Intelligent Search estructura los productos dentro de "products"
+                if isinstance(raw_data, dict):
+                    items_list = raw_data.get("products", [])
+                else:
+                    items_list = raw_data
 
                 if not isinstance(items_list, list):
                     return []
 
-                # Mantener la posición ordinal exacta de la góndola (1..N)
-                for real_position, product in enumerate(items_list, start=1):
+                visible_position = 1
+
+                for product in items_list:
                     try:
                         title = product.get("productName") or product.get("productTitle") or ""
                         brand = product.get("brand") or "Sin Marca"
@@ -94,11 +109,12 @@ class VTEXScraper:
                                 in_stock = qty > 0 if qty is not None else True
 
                         if title:
+                            # Solo incrementamos la posición visible si el producto está disponible o
+                            # si queremos auditar exactamente el orden de la tienda física/virtual
                             extracted_products.append(
                                 ExtractedProductData(
                                     search_keyword=keyword,
-                                    # La posición respeta la posición orgánica en la búsqueda
-                                    search_position=real_position,
+                                    search_position=visible_position,
                                     title=title.strip(),
                                     brand=str(brand).strip(),
                                     base_price=base_price,
@@ -106,6 +122,8 @@ class VTEXScraper:
                                     in_stock=in_stock,
                                 )
                             )
+                            visible_position += 1
+
                     except Exception as parse_err:
                         continue
 
