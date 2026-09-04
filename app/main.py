@@ -194,35 +194,16 @@ def clean_database(confirm: bool = Query(False)):
         conn.close()
 
 
-# --- ENDPOINT PARA OBTENER OPCIONES DE FILTROS (MARCAS Y PRODUCTOS) ---
-@app.get("/analytics/options")
-def get_filter_options():
-    """Retorna las listas distintas de marcas y productos para los selectores frontend."""
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT COALESCE(brand, 'Sin Marca') as brand FROM scraper_results WHERE brand IS NOT NULL ORDER BY brand ASC;")
-            brands = [r["brand"] for r in cur.fetchall()]
-
-            cur.execute("SELECT DISTINCT product_name FROM scraper_results WHERE product_name IS NOT NULL ORDER BY product_name ASC;")
-            products = [r["product_name"] for r in cur.fetchall()]
-
-            return {"brands": brands, "products": products}
-    finally:
-        conn.close()
-
-
-# --- ENDPOINT ANALYTICS: TABLA DE POSICIONES DEDUPLICADA ---
+# --- ENDPOINT ANALYTICS: TABLA DE POSICIONES Y REFERENCIAS ---
 @app.get("/analytics/positions")
 def get_positions(
     retailer: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
-    product_name: Optional[str] = Query(None),
     search_term: Optional[str] = Query(None),
     query: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500)
 ):
-    """Obtiene el ranking de posicionamiento deduplicado indicando número de permanencias."""
+    """Obtiene el ranking de posición en góndola digital filtrado por referencia o marca."""
     conn = get_db_connection()
     try:
         where_clause = " WHERE 1=1"
@@ -233,9 +214,6 @@ def get_positions(
         if brand and brand != "ALL":
             where_clause += " AND brand ILIKE %s"
             params.append(f"%{brand}%")
-        if product_name and product_name != "ALL":
-            where_clause += " AND product_name ILIKE %s"
-            params.append(f"%{product_name}%")
         if search_term and search_term != "ALL":
             where_clause += " AND search_term ILIKE %s"
             params.append(f"%{search_term}%")
@@ -253,13 +231,10 @@ def get_positions(
                 price,
                 discount_price,
                 is_available,
-                COUNT(*) as run_count,
-                MIN(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as first_seen,
-                MAX(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as last_seen
+                (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') as captured_at
             FROM scraper_results
             {where_clause}
-            GROUP BY retailer, search_term, product_name, brand, position, price, discount_price, is_available
-            ORDER BY last_seen DESC, position ASC
+            ORDER BY position ASC, id DESC
             LIMIT %s;
         """
         params.append(limit)
@@ -270,63 +245,51 @@ def get_positions(
         conn.close()
 
 
-# --- ENDPOINT ANALYTICS: COMPARADOR HEAD-TO-HEAD DE PRODUCTOS / REFERENCIAS ---
-@app.get("/analytics/compare-products")
-def compare_products(
-    product_a: str = Query(..., description="Nombre exacto de la referencia A (Base)"),
-    product_b: str = Query(..., description="Nombre exacto de la referencia B (Comparación)"),
-    retailer: Optional[str] = Query(None)
+# --- ENDPOINT ANALYTICS: COMPARADOR HEAD-TO-HEAD DE MARCAS ---
+@app.get("/analytics/compare")
+def compare_brands(
+    brand_a: str = Query(..., description="Primera marca a comparar (ej. Nosotras)"),
+    brand_b: str = Query(..., description="Segunda marca a comparar (ej. Kotex)"),
+    retailer: Optional[str] = Query(None),
+    search_term: Optional[str] = Query(None)
 ):
-    """Compara métricas y calcula diferenciales entre dos referencias de productos específicas."""
+    """Compara métricas clave (Precios, Promociones, Visibilidad y Stock) entre dos marcas."""
     conn = get_db_connection()
     try:
-        where_clause = " WHERE product_name ILIKE %s"
-        params_a = [f"%{product_a}%"]
-        params_b = [f"%{product_b}%"]
+        where_clause = " WHERE brand ILIKE %s"
+        params_a = [f"%{brand_a}%"]
+        params_b = [f"%{brand_b}%"]
 
         if retailer and retailer != "ALL":
             where_clause += " AND retailer ILIKE %s"
             params_a.append(f"%{retailer}%")
             params_b.append(f"%{retailer}%")
+        if search_term and search_term != "ALL":
+            where_clause += " AND search_term ILIKE %s"
+            params_a.append(f"%{search_term}%")
+            params_b.append(f"%{search_term}%")
 
         query_sql = f"""
             SELECT 
-                product_name,
-                COALESCE(brand, 'Sin Marca') as brand,
                 COUNT(*) as total_skus,
                 ROUND(AVG(position)::numeric, 1) as avg_position,
+                COUNT(CASE WHEN position <= 10 THEN 1 END) as top10_count,
                 ROUND(AVG(price)::numeric, 0) as avg_price,
                 ROUND(AVG(CASE WHEN discount_price > 0 AND discount_price < price THEN discount_price ELSE price END)::numeric, 0) as avg_final_price,
+                COUNT(CASE WHEN discount_price > 0 AND discount_price < price THEN 1 END) as promo_skus,
                 COUNT(CASE WHEN is_available = FALSE THEN 1 END) as oos_skus
             FROM scraper_results
-            {where_clause}
-            GROUP BY product_name, COALESCE(brand, 'Sin Marca');
+            {where_clause};
         """
         with conn.cursor() as cur:
             cur.execute(query_sql, tuple(params_a))
-            res_a = cur.fetchone() or {}
+            res_a = cur.fetchone()
             cur.execute(query_sql, tuple(params_b))
-            res_b = cur.fetchone() or {}
-
-        price_a = float(res_a.get("avg_final_price") or 0)
-        price_b = float(res_b.get("avg_final_price") or 0)
-        price_diff = price_b - price_a
-        price_pct = ((price_b - price_a) / price_a * 100) if price_a > 0 else 0
-
-        pos_a = float(res_a.get("avg_position") or 0)
-        pos_b = float(res_b.get("avg_position") or 0)
-        pos_diff = pos_b - pos_a
+            res_b = cur.fetchone()
 
         return {
-            "product_a": res_a,
-            "product_b": res_b,
-            "differentials": {
-                "price_diff": price_diff,
-                "price_pct": round(price_pct, 1),
-                "is_b_cheaper": price_diff < 0,
-                "pos_diff": round(pos_diff, 1),
-                "is_b_better_positioned": pos_diff < 0
-            }
+            "brand_a": {"name": brand_a, "metrics": res_a},
+            "brand_b": {"name": brand_b, "metrics": res_b}
         }
     finally:
         conn.close()
