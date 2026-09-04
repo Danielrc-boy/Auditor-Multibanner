@@ -26,9 +26,11 @@ class VTEXScraper:
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        if not isinstance(keyword, str):
-            print(f"[WARN {self.retailer.upper()}] Keyword inválida recibida: {type(keyword)}", flush=True)
+        if not isinstance(keyword, str) or not keyword.strip():
+            print(f"[WARN {self.retailer.upper()}] Keyword no válida recibida: {type(keyword)}", flush=True)
             return []
+
+        keyword = keyword.strip()
 
         variables_payload = {
             "first": limit,
@@ -160,23 +162,46 @@ class VTEXScraper:
 
 
 # ==============================================================================
-# RUNNER BLINDADO CONTRA PARÁMETROS ORQUESTATORES INVÁLIDOS
+# RUNNER EXHAUSTIVO Y SEGURO PARA EL ORQUESTADOR
 # ==============================================================================
 
+def _extract_keyword_from_any(obj: Any) -> str | None:
+    """Inspecciona recursivamente el objeto recibido para extraer el texto de búsqueda."""
+    if isinstance(obj, str) and not obj.startswith("user="):
+        return obj
+    if isinstance(obj, dict):
+        for key in ["keyword", "search_keyword", "query", "term", "name"]:
+            if key in obj and isinstance(obj[key], str):
+                return obj[key]
+    if hasattr(obj, "search_keyword") and isinstance(obj.search_keyword, str):
+        return obj.search_keyword
+    if hasattr(obj, "keyword") and isinstance(obj.keyword, str):
+        return obj.keyword
+    return None
+
 async def run_vtex_scraping(*args, **kwargs) -> List[ExtractedProductData]:
-    keyword = kwargs.get("keyword") or kwargs.get("search_keyword")
+    keyword = None
+
+    # 1. Buscar en kwargs
+    for key in ["keyword", "search_keyword", "query", "term"]:
+        if key in kwargs and isinstance(kwargs[key], str):
+            keyword = kwargs[key]
+            break
+
+    # 2. Si no estuvo en kwargs, buscar entre los argumentos posicionales
+    if not keyword:
+        for arg in args:
+            extracted = _extract_keyword_from_any(arg)
+            if extracted:
+                keyword = extracted
+                break
+
     retailer = kwargs.get("retailer", "exito")
     base_url = kwargs.get("base_url", "https://www.exito.com")
     limit = kwargs.get("limit", 50)
 
     if not keyword:
-        for arg in args:
-            if isinstance(arg, str) and not arg.startswith("user="):
-                keyword = arg
-                break
-
-    if not keyword:
-        print("[RUNNER ERROR] VTEX Scraper: No se recibió una keyword válida.", flush=True)
+        print(f"[RUNNER ERROR] VTEX Scraper ({retailer}): No se recibió una keyword válida.", flush=True)
         return []
 
     try:
