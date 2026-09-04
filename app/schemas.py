@@ -11,7 +11,7 @@ class ExtractedProductData(BaseModel):
     base_price: float
     discount_price: Optional[float] = None
     in_stock: bool = True
-    seller_name: Optional[str] = "Sin Vendedor"
+    seller_name: Optional[str] = "Sin Vendedor"  # Campo agregado para capturar vendedores/terceros
 
 
 class RetailerCreate(BaseModel):
