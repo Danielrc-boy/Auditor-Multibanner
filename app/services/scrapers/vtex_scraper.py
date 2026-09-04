@@ -18,9 +18,14 @@ class ExtractedProductData(BaseModel):
 
 
 class VTEXScraper:
-    def __init__(self, retailer: str, base_url: str):
+    def __init__(self, retailer: str, base_url: str = None):
         self.retailer = retailer.lower()
-        self.base_url = base_url.rstrip("/")
+        if base_url:
+            self.base_url = base_url.rstrip("/")
+        elif self.retailer == "carulla":
+            self.base_url = "https://www.carulla.com"
+        else:
+            self.base_url = "https://www.exito.com"
         self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -32,7 +37,6 @@ class VTEXScraper:
         }
 
     def _build_request(self, target_url: str):
-        """Enruta la petición a través de ScraperAPI si hay una key configurada."""
         if SCRAPERAPI_KEY:
             return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": target_url}
         return target_url, None
@@ -40,8 +44,6 @@ class VTEXScraper:
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
         encoded_keyword = urllib.parse.quote(keyword)
 
-        # Ruta verificada con evidencia real (con /io/ delante) — sin esto, Éxito/Carulla
-        # responden 403/406 detrás de su protección Cloudflare.
         target_url = (
             f"{self.base_url}/io/api/catalog_system/pub/products/search/{encoded_keyword}"
             f"?_from=0&_to={limit - 1}"
@@ -95,8 +97,6 @@ class VTEXScraper:
                                 available_qty = offer.get("AvailableQuantity", 0)
                                 in_stock = (available_qty or 0) > 0
 
-                        # Igual que en Farmatodo: solo numeramos posición sobre
-                        # productos disponibles, como los ve un comprador real.
                         if not in_stock:
                             continue
 
@@ -122,3 +122,34 @@ class VTEXScraper:
                 return []
 
         return extracted_products
+
+
+async def run_vtex_scraping(conn) -> int:
+    """Orquestador: lee los términos activos y busca en Éxito y Carulla."""
+    search_configs = []
+    with conn.cursor() as cur:
+        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
+        rows = cur.fetchall()
+        search_configs = [r["search_term"] for r in rows] if rows else []
+
+    if not search_configs:
+        return 0
+
+    from app.main import save_scraper_results
+
+    total_saved = 0
+    for term in search_configs:
+        for retailer in ["exito", "carulla"]:
+            scraper = VTEXScraper(retailer=retailer)
+            try:
+                results = await scraper.search_keyword(term, limit=50)
+                if results:
+                    count = save_scraper_results(conn, results, retailer=retailer)
+                    total_saved += count
+                    print(f"[{retailer.upper()}] Guardados {count} para '{term}'.", flush=True)
+                else:
+                    print(f"[{retailer.upper()}] Sin resultados para '{term}'.", flush=True)
+            except Exception as e:
+                print(f"[SCRAPING ERROR] {retailer.upper()} '{term}': {e}", flush=True)
+
+    return total_saved
