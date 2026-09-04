@@ -5,7 +5,7 @@ import httpx
 from pathlib import Path
 from typing import List, Dict, Any
 
-# Resolvemos la importación de ExtractedProductData dinámicamente para evitar fallas
+# Importación dinámica blindada
 root_path = Path(__file__).resolve().parent.parent.parent.parent
 if str(root_path) not in sys.path:
     sys.path.insert(0, str(root_path))
@@ -25,11 +25,11 @@ class VTEXScraper:
             "Accept": "application/json"
         }
 
-    def _build_request(self, url: str, params: dict | None) -> tuple[str, dict | None]:
-        return url, params
-
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        # Payload idéntico a la UI de FastStore VTEX
+        if not isinstance(keyword, str):
+            print(f"[WARN {self.retailer.upper()}] Keyword inválida recibida: {type(keyword)}", flush=True)
+            return []
+
         variables_payload = {
             "first": limit,
             "sort": "score_desc",
@@ -42,16 +42,13 @@ class VTEXScraper:
 
         variables_json = json.dumps(variables_payload)
         encoded_variables = urllib.parse.quote(variables_json)
-        
         gql_url = f"{self.base_url}/api/graphql?operationName=SearchQuery&variables={encoded_variables}"
-        request_url, params = self._build_request(gql_url, None)
 
         async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
             try:
-                response = await client.get(request_url, headers=self.headers, params=params)
+                response = await client.get(gql_url, headers=self.headers)
                 if response.status_code == 200:
-                    data = response.json()
-                    products = self._parse_graphql_response(data, keyword)
+                    products = self._parse_graphql_response(response.json(), keyword)
                     if products:
                         return products
             except Exception as e:
@@ -59,17 +56,10 @@ class VTEXScraper:
 
             # Fallback a REST Intelligent Search
             is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{urllib.parse.quote(keyword)}"
-            is_params = {
-                "page": 1,
-                "count": limit,
-                "query": keyword,
-                "sort": "",
-                "locale": "es-CO"
-            }
-            req_is_url, req_is_params = self._build_request(is_url, is_params)
+            is_params = {"page": 1, "count": limit, "query": keyword, "locale": "es-CO"}
             
             try:
-                response = await client.get(req_is_url, headers=self.headers, params=req_is_params)
+                response = await client.get(is_url, headers=self.headers, params=is_params)
                 if response.status_code in (200, 206):
                     data = response.json()
                     products_raw = data.get("products", []) if isinstance(data, dict) else []
@@ -85,46 +75,45 @@ class VTEXScraper:
         try:
             products = data.get("data", {}).get("search", {}).get("products", {}).get("edges", [])
             for index, item in enumerate(products, start=1):
-                prod = self._parse_graphql_product(item, index, keyword)
-                if prod:
-                    parsed.append(prod)
+                node = item.get("node", item)
+                title = node.get("name") or node.get("productName", "")
+                if not title:
+                    continue
+
+                brand = node.get("brand", {}).get("name", "") if isinstance(node.get("brand"), dict) else node.get("brand", "Sin Marca")
+                offers = node.get("offers", {}).get("offers", [])
+                
+                base_price = 0.0
+                discount_price = None
+                seller_name = "Éxito"
+
+                if offers:
+                    main_offer = offers[0]
+                    curr_discount = float(main_offer.get("price", 0.0))
+                    curr_base = float(main_offer.get("listPrice", curr_discount))
+                    seller_name = main_offer.get("seller", {}).get("identifier", "Éxito/Carulla")
+
+                    if 0 < curr_discount < curr_base:
+                        base_price = curr_base
+                        discount_price = curr_discount
+                    else:
+                        base_price = curr_base if curr_base > 0 else curr_discount
+
+                parsed.append(
+                    ExtractedProductData(
+                        search_keyword=keyword,
+                        search_position=index,
+                        title=title,
+                        brand=brand if brand else "Sin Marca",
+                        base_price=base_price,
+                        discount_price=discount_price,
+                        in_stock=True,
+                        seller_name=seller_name
+                    )
+                )
         except Exception as e:
             print(f"[PARSER ERROR] {self.retailer.upper()} GraphQL: {e}", flush=True)
         return parsed
-
-    def _parse_graphql_product(self, item: Dict[Any, Any], position: int, keyword: str) -> ExtractedProductData:
-        node = item.get("node", item)
-        title = node.get("name") or node.get("productName", "")
-        brand = node.get("brand", {}).get("name", "") if isinstance(node.get("brand"), dict) else node.get("brand", "Sin Marca")
-        
-        offers = node.get("offers", {}).get("offers", [])
-        base_price = 0.0
-        discount_price = None
-        seller_name = "Sin Vendedor"
-        in_stock = True
-
-        if offers:
-            main_offer = offers[0]
-            curr_discount = float(main_offer.get("price", 0.0))
-            curr_base = float(main_offer.get("listPrice", curr_discount))
-            seller_name = main_offer.get("seller", {}).get("identifier", "Éxito/Carulla")
-            
-            if curr_discount < curr_base and curr_discount > 0:
-                base_price = curr_base
-                discount_price = curr_discount
-            else:
-                base_price = curr_base if curr_base > 0 else curr_discount
-
-        return ExtractedProductData(
-            search_keyword=keyword,
-            search_position=position,
-            title=title,
-            brand=brand if brand else "Sin Marca",
-            base_price=base_price,
-            discount_price=discount_price,
-            in_stock=in_stock,
-            seller_name=seller_name
-        )
 
     def _parse_intelligent_search(self, products_raw: list, keyword: str, limit: int) -> List[ExtractedProductData]:
         parsed = []
@@ -132,7 +121,6 @@ class VTEXScraper:
             title = prod.get("productName", "")
             brand = prod.get("brand", "Sin Marca")
             items = prod.get("items", [])
-            
             base_price = 0.0
             discount_price = None
             seller_name = "Sin Vendedor"
@@ -145,7 +133,7 @@ class VTEXScraper:
                     curr_base = float(comm_offer.get("ListPrice", curr_discount))
                     seller_name = sellers[0].get("sellerName", "Sin Vendedor")
 
-                    if curr_discount < curr_base and curr_discount > 0:
+                    if 0 < curr_discount < curr_base:
                         base_price = curr_base
                         discount_price = curr_discount
                     else:
@@ -167,23 +155,33 @@ class VTEXScraper:
 
 
 # ==============================================================================
-# FUNCIONES RUNNER EXPORTADAS (Requeridas por el orquestador principal del backend)
+# RUNNER BLINDADO CONTRA PARÁMETROS ORQUESTATORES INVÁLIDOS
 # ==============================================================================
 
-async def run_vtex_scraping(keyword: str, retailer: str = "exito", base_url: str = "https://www.exito.com", limit: int = 50) -> List[ExtractedProductData]:
-    """Runner asíncrono primario llamado por FastAPI / Celery / BackgroundTasks."""
+async def run_vtex_scraping(*args, **kwargs) -> List[ExtractedProductData]:
+    """
+    Extrae dinámicamente el parámetro 'keyword' previniendo que objetos de conexión 
+    o argumentos posicionales de base de datos desconfiguren la ejecución.
+    """
+    keyword = kwargs.get("keyword") or kwargs.get("search_keyword")
+    retailer = kwargs.get("retailer", "exito")
+    base_url = kwargs.get("base_url", "https://www.exito.com")
+    limit = kwargs.get("limit", 50)
+
+    # Si se pasó por posición, buscamos el primer argumento de tipo str
+    if not keyword:
+        for arg in args:
+            if isinstance(arg, str) and not arg.startswith("user="):
+                keyword = arg
+                break
+
+    if not keyword:
+        print("[RUNNER ERROR] VTEX Scraper: No se recibió una keyword válida.", flush=True)
+        return []
+
     try:
         scraper = VTEXScraper(retailer=retailer, base_url=base_url)
         return await scraper.search_keyword(keyword=keyword, limit=limit)
     except Exception as e:
-        print(f"[RUNNER ERROR] Error ejecutando VTEX Scraper para '{keyword}': {e}", flush=True)
-        return []
-
-def run_vtex_scraping_sync(keyword: str, retailer: str = "exito", base_url: str = "https://www.exito.com", limit: int = 50) -> List[ExtractedProductData]:
-    """Runner síncrono fallback si el orquestador no usa async/await."""
-    import asyncio
-    try:
-        return asyncio.run(run_vtex_scraping(keyword=keyword, retailer=retailer, base_url=base_url, limit=limit))
-    except Exception as e:
-        print(f"[RUNNER SYNC ERROR] VTEX Scraper: {e}", flush=True)
+        print(f"[RUNNER ERROR] Excepción en VTEX Scraper para '{keyword}': {e}", flush=True)
         return []
