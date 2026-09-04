@@ -1,5 +1,4 @@
 import os
-import json
 import urllib.parse
 import httpx
 from typing import List
@@ -16,77 +15,81 @@ class VTEXScraper:
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "es-CO,es;q=0.9",
-            "Content-Type": "application/json",
-            "Origin": self.base_url,
+            "Accept-Language": "es-CO,es-419;q=0.9,es;q=0.8",
             "Referer": f"{self.base_url}/",
+            "Origin": self.base_url,
+            "Cookie": "vtex_segment=eyJjdXJyZW5jeUNvZGUiOiJDT1AiLCJjdXJyZW5jeVN5bWJvbCI6IiQiLCJjb3VudHJ5Q29kZSI6IkNPTCJ9"
         }
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
         clean_keyword = keyword.strip()
+        encoded_keyword = urllib.parse.quote(clean_keyword)
 
-        async with httpx.AsyncClient(timeout=30.0, verify=False, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=45.0, verify=False, follow_redirects=True) as client:
             
-            # --- ESTRATEGIA 1: GraphQL VTEX IO (Search Resolver - Usado por la Web) ---
-            gql_url = f"{self.base_url}/_v/segment/graphql/v1"
-            gql_query = {
-                "query": """query productSearch($query: String, $from: Int, $to: Int) {
-                    productSearch(query: $query, from: $from, to: $to) {
-                        products {
-                            productName
-                            brand
-                            items {
-                                sellers {
-                                    commertialOffer {
-                                        Price
-                                        ListPrice
-                                        AvailableQuantity
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }""",
-                "variables": {"query": clean_keyword, "from": 0, "to": limit - 1}
-            }
+            # --- ESTRATEGIA 1: Intelligent Search V2 (Endpoint nativo de Éxito/Carulla) ---
+            is_url = f"{self.base_url}/api/io/_v/api/intelligent-search/product_search/{encoded_keyword}?page=1&count={limit}&query={encoded_keyword}&sort=score_desc&locale=es-CO"
+            req_url, params = self._build_request(is_url)
 
-            req_url, params = self._build_request(gql_url)
-            
             try:
-                if params and "api_key" in params:
-                    # Si usamos ScraperAPI en POST
-                    res = await client.post(req_url, json=gql_query, headers=self.headers, params=params)
-                else:
-                    res = await client.post(gql_url, json=gql_query, headers=self.headers)
-
+                res = await client.get(req_url, headers=self.headers, params=params)
                 if res.status_code == 200:
                     data = res.json()
-                    products = data.get("data", {}).get("productSearch", {}).get("products", [])
+                    products = data.get("products", [])
                     if products:
-                        return self._parse_catalog_search(products, clean_keyword)
+                        return self._parse_intelligent_search(products, clean_keyword, limit)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] GraphQL Search falló: {e}", flush=True)
+                print(f"[WARN {self.retailer.upper()}] Intelligent Search V2 falló: {e}", flush=True)
 
-            # --- ESTRATEGIA 2: Catalog System Public API con Sales Channel ---
-            encoded_term = urllib.parse.quote(clean_keyword)
-            catalog_url = f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_term}?_from=0&_to={limit-1}&sc=1"
-            req_cat_url, cat_params = self._build_request(catalog_url)
+            # --- ESTRATEGIA 2: Catalog System Traditional API (SC=1 Colombia) ---
+            legacy_url = f"{self.base_url}/api/catalog_system/pub/products/search/{encoded_keyword}?_from=0&_to={limit-1}&sc=1"
+            req_leg_url, leg_params = self._build_request(legacy_url)
 
             try:
-                res_cat = await client.get(req_cat_url, headers=self.headers, params=cat_params)
-                if res_cat.status_code in (200, 206):
-                    data = res_cat.json()
+                res_leg = await client.get(req_leg_url, headers=self.headers, params=leg_params)
+                if res_leg.status_code in (200, 206):
+                    data = res_leg.json()
                     if isinstance(data, list) and len(data) > 0:
                         return self._parse_catalog_search(data, clean_keyword)
             except Exception as e:
-                print(f"[WARN {self.retailer.upper()}] Catalog Search falló: {e}", flush=True)
+                print(f"[WARN {self.retailer.upper()}] Legacy Catalog Search falló: {e}", flush=True)
 
         return []
 
     def _build_request(self, target_url: str):
         if SCRAPERAPI_KEY:
-            return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": target_url, "ultra_premium": "true"}
+            # Importante: Codificar la URL completa para evitar romper los parámetros internos
+            encoded_target = urllib.parse.quote_plus(target_url)
+            proxy_url = f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={encoded_target}&keep_headers=true"
+            return proxy_url, {}
         return target_url, {}
+
+    def _parse_intelligent_search(self, products: list, search_term: str, limit: int) -> List[ExtractedProductData]:
+        parsed = []
+        for idx, prod in enumerate(products[:limit], start=1):
+            try:
+                items = prod.get("items", [])
+                item = items[0] if items else {}
+                sellers = item.get("sellers", [{}])
+                comm = sellers[0].get("commertialOffer", {}) if sellers else {}
+
+                price = float(comm.get("Price", 0.0) or prod.get("price", 0.0) or 0.0)
+                list_price = float(comm.get("ListPrice", 0.0) or prod.get("listPrice", 0.0) or price)
+                discount_price = price if (0 < price < list_price) else None
+                in_stock = comm.get("AvailableQuantity", 0) > 0 if "AvailableQuantity" in comm else prod.get("isAvailable", True)
+
+                parsed.append(ExtractedProductData(
+                    search_keyword=search_term,
+                    search_position=idx,
+                    title=prod.get("productName") or prod.get("name") or "Sin título",
+                    brand=prod.get("brand") or prod.get("brandName") or "Sin Marca",
+                    base_price=list_price,
+                    discount_price=discount_price,
+                    in_stock=in_stock
+                ))
+            except Exception:
+                continue
+        return parsed
 
     def _parse_catalog_search(self, products: list, search_term: str) -> List[ExtractedProductData]:
         parsed = []
