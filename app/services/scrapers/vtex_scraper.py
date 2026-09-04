@@ -5,7 +5,6 @@ import httpx
 from pydantic import BaseModel
 
 SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
-print(f"[CONFIG CHECK] SCRAPERAPI_KEY cargada: {'SÍ (' + SCRAPERAPI_KEY[:6] + '...)' if SCRAPERAPI_KEY else 'NO - está vacía'}", flush=True)
 
 
 class ExtractedProductData(BaseModel):
@@ -51,11 +50,17 @@ class VTEXScraper:
         )
         request_url, params = self._build_request(target_url)
 
+        # DIAGNÓSTICO: confirma en el log exacto qué está pasando en este momento
+        key_status = f"SÍ ({SCRAPERAPI_KEY[:6]}...)" if SCRAPERAPI_KEY else "NO - VACÍA"
+        via = "ScraperAPI" if SCRAPERAPI_KEY else "DIRECTO (sin proxy)"
+        print(f"[DIAG {self.retailer.upper()}] Key cargada: {key_status} | Petición vía: {via}", flush=True)
+
         extracted_products: List[ExtractedProductData] = []
 
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=False) as client:
             try:
                 response = await client.get(request_url, headers=self.headers, params=params)
+                print(f"[DIAG {self.retailer.upper()}] Status recibido: {response.status_code}", flush=True)
 
                 if response.status_code not in (200, 206):
                     fallback_target = (
@@ -66,7 +71,7 @@ class VTEXScraper:
                     response = await client.get(fb_url, headers=self.headers, params=fb_params)
 
                 if response.status_code not in (200, 206):
-                    print(f"[{self.retailer.upper()} ERROR] HTTP Status {response.status_code} para '{keyword}'")
+                    print(f"[{self.retailer.upper()} ERROR] HTTP Status {response.status_code} para '{keyword}' | Body: {response.text[:200]}")
                     return []
 
                 raw_data = response.json()
@@ -126,7 +131,6 @@ class VTEXScraper:
 
 
 async def run_vtex_scraping(conn) -> int:
-    """Orquestador: lee los términos activos y busca en Éxito y Carulla."""
     search_configs = []
     with conn.cursor() as cur:
         cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
