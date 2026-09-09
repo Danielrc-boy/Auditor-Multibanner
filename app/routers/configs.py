@@ -1,31 +1,108 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from typing import List
-from uuid import UUID
-from app.database import get_db
-from app import models, schemas
+"""
+Rutas para gestionar las búsquedas configuradas (search_configs):
+crear, listar, activar/desactivar, y eliminar términos de búsqueda.
 
-router = APIRouter(prefix="/configs", tags=["Monitoring Configs"])
+Este router se conecta a la app principal en main.py con:
+    app.include_router(configs.router)
+"""
+from typing import Optional
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from app.database import get_db_connection
 
-@router.get("/", response_model=List[schemas.MonitoringConfigResponse])
-def list_configs(db: Session = Depends(get_db)):
-    return db.query(models.MonitoringConfig).all()
+router = APIRouter(tags=["configs"])
 
-@router.post("/", response_model=schemas.MonitoringConfigResponse)
-def create_config(config: schemas.MonitoringConfigCreate, db: Session = Depends(get_db)):
-    if not config.sku_id and not config.search_keyword:
-        raise HTTPException(status_code=400, detail="Debe proporcionar sku_id o search_keyword.")
-    db_obj = models.MonitoringConfig(**config.model_dump())
-    db.add(db_obj)
-    db.commit()
-    db.refresh(db_obj)
-    return db_obj
 
-@router.delete("/{config_id}")
-def delete_config(config_id: UUID, db: Session = Depends(get_db)):
-    config = db.query(models.MonitoringConfig).filter(models.MonitoringConfig.id == config_id).first()
-    if not config:
-        raise HTTPException(status_code=404, detail="Configuración no encontrada")
-    db.delete(config)
-    db.commit()
-    return {"message": "Configuración eliminada correctamente"}
+class SearchConfigCreate(BaseModel):
+    search_term: Optional[str] = None
+    keyword: Optional[str] = None
+
+
+@router.get("/configs")
+@router.get("/configs/")
+def get_configs():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM search_configs ORDER BY created_at DESC;")
+    configs = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return configs
+
+
+@router.post("/configs")
+@router.post("/configs/")
+def create_config(config: SearchConfigCreate):
+    term = config.search_term or config.keyword
+    if not term:
+        raise HTTPException(
+            status_code=400, detail="Debe proporcionar 'search_term' o 'keyword'."
+        )
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO search_configs (search_term, is_active) VALUES (%s, TRUE) RETURNING *;",
+            (term,),
+        )
+        new_config = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return new_config
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Error guardando: {str(e)}")
+
+
+@router.patch("/configs/{config_id}/toggle")
+def toggle_config(config_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE search_configs SET is_active = NOT is_active WHERE id = %s RETURNING id, search_term, is_active;",
+            (config_id,),
+        )
+        updated = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        if not updated:
+            raise HTTPException(status_code=404, detail="Configuración no encontrada.")
+        return {"status": "success", "config": updated}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=400, detail=f"Error actualizando estado: {str(e)}"
+        )
+
+
+@router.delete("/configs/{config_id}")
+def delete_config(config_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM search_configs WHERE id = %s RETURNING id;", (config_id,)
+        )
+        deleted = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Configuración no encontrada.")
+        return {"status": "success", "deleted_id": config_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Error eliminando: {str(e)}")

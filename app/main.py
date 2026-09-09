@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from app.routers import retailers
+from app.routers import retailers, configs
 app = FastAPI()
 origins = [
     "https://auditor-multibanner.vercel.app",
@@ -27,6 +27,7 @@ app.add_middleware(
 )
 
 app.include_router(retailers.router)
+app.include_router(configs.router)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 def get_db_connection():
@@ -147,9 +148,6 @@ async def run_all_scraping(conn):
     except Exception as e:
         print(f"[MAIN ERROR] Rappi Scraper: {e}", flush=True)
     return total_records
-class SearchConfigCreate(BaseModel):
-    search_term: Optional[str] = None
-    keyword: Optional[str] = None
 @app.get("/")
 def read_root():
     return {"message": "API Monitoreo Activa"}
@@ -395,94 +393,6 @@ def get_dashboard_page():
     if os.path.exists("dashboard.html"):
         return FileResponse("dashboard.html")
     raise HTTPException(status_code=404, detail="dashboard.html no encontrado.")
-@app.get("/configs")
-@app.get("/configs/")
-def get_configs():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM search_configs ORDER BY created_at DESC;")
-    configs = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return configs
-@app.post("/configs")
-@app.post("/configs/")
-def create_config(config: SearchConfigCreate):
-    term = config.search_term or config.keyword
-    if not term:
-        raise HTTPException(
-            status_code=400, detail="Debe proporcionar 'search_term' o 'keyword'."
-        )
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO search_configs (search_term, is_active) VALUES (%s, TRUE) RETURNING *;",
-            (term,),
-        )
-        new_config = cursor.fetchone()
-        conn.commit()
-        cursor.close()
-        conn.close()
-        return new_config
-    except Exception as e:
-        conn.rollback()
-        cursor.close()
-        conn.close()
-        raise HTTPException(status_code=400, detail=f"Error guardando: {str(e)}")
-@app.patch("/configs/{config_id}/toggle")
-def toggle_config(config_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "UPDATE search_configs SET is_active = NOT is_active WHERE id = %s RETURNING id, search_term, is_active;",
-            (config_id,),
-        )
-        updated = cursor.fetchone()
-        conn.commit()
-        cursor.close()
-        conn.close()
-        if not updated:
-            raise HTTPException(
-                status_code=404, detail="Configuración no encontrada."
-            )
-        return {"status": "success", "config": updated}
-    except HTTPException:
-        raise
-    except Exception as e:
-        conn.rollback()
-        cursor.close()
-        conn.close()
-        raise HTTPException(
-            status_code=400, detail=f"Error actualizando estado: {str(e)}"
-        )
-@app.delete("/configs/{config_id}")
-def delete_config(config_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "DELETE FROM search_configs WHERE id = %s RETURNING id;", (config_id,)
-        )
-        deleted = cursor.fetchone()
-        conn.commit()
-        cursor.close()
-        conn.close()
-        if not deleted:
-            raise HTTPException(
-                status_code=404, detail="Configuración no encontrada."
-            )
-        return {"status": "success", "deleted_id": config_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        conn.rollback()
-        cursor.close()
-        conn.close()
-        raise HTTPException(
-            status_code=400, detail=f"Error eliminando: {str(e)}"
-        )
 @app.get("/results")
 @app.get("/results/")
 def get_results(
