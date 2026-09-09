@@ -10,15 +10,12 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
-
 app = FastAPI()
-
 origins = [
     "https://auditor-multibanner.vercel.app",
     "https://auditor-multibanner-i2djrxig5-daniel-restrepo.vercel.app",
     "http://localhost:3000",
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -27,10 +24,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
-
 DATABASE_URL = os.getenv("DATABASE_URL")
-
-
 def get_db_connection():
     if not DATABASE_URL:
         raise HTTPException(
@@ -41,13 +35,9 @@ def get_db_connection():
         return conn
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")
-
-
 def save_scraper_results(conn, results: list, retailer: str) -> int:
     if not results:
         return 0
-    
-    # Inclusión de seller_name en el INSERT
     insert_query = """
         INSERT INTO scraper_results (
             retailer, search_term, product_name, brand, position,
@@ -57,7 +47,6 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
     """
     saved_count = 0
     formatted_retailer = retailer.capitalize() if retailer else "Unknown"
-    
     with conn.cursor() as cur:
         for item in results:
             try:
@@ -68,10 +57,7 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
                 base_price = getattr(item, "base_price", 0.0)
                 disc_price = getattr(item, "discount_price", None)
                 stock = getattr(item, "in_stock", True)
-                
-                # Obtener seller_name o usar el nombre del Retailer por defecto
                 seller_name = getattr(item, "seller_name", None) or getattr(item, "seller", None) or formatted_retailer
-                
                 cur.execute(
                     insert_query,
                     (
@@ -92,7 +78,6 @@ def save_scraper_results(conn, results: list, retailer: str) -> int:
     conn.commit()
     return saved_count
 
-
 async def run_farmatodo_scraping(conn):
     search_configs = []
     with conn.cursor() as cur:
@@ -104,7 +89,6 @@ async def run_farmatodo_scraping(conn):
         return 0
     total_saved = 0
     from app.services.scrapers.farmatodo_scraper import FarmatodoScraper
-
     print("\n[SCRAPING] Iniciando extracción para: FARMATODO", flush=True)
     scraper = FarmatodoScraper()
     for term in search_configs:
@@ -119,8 +103,6 @@ async def run_farmatodo_scraping(conn):
         except Exception as e:
             print(f"[SCRAPING ERROR] FARMATODO '{term}': {e}", flush=True)
     return total_saved
-
-
 async def run_rappi_scraping(conn):
     search_configs = []
     with conn.cursor() as cur:
@@ -131,7 +113,6 @@ async def run_rappi_scraping(conn):
         return 0
     total_saved = 0
     from app.services.scrapers.rappi_scraper import RappiScraper
-
     print("\n[SCRAPING] Iniciando extracción para: RAPPI", flush=True)
     scraper = RappiScraper()
     for term in search_configs:
@@ -146,13 +127,10 @@ async def run_rappi_scraping(conn):
         except Exception as e:
             print(f"[SCRAPING ERROR] RAPPI '{term}': {e}", flush=True)
     return total_saved
-
-
 async def run_all_scraping(conn):
     total_records = 0
     try:
         from app.services.scrapers.vtex_scraper import run_vtex_scraping
-
         total_records += await run_vtex_scraping(conn)
     except Exception as e:
         print(f"[MAIN ERROR] VTEX Scraper: {e}", flush=True)
@@ -165,62 +143,99 @@ async def run_all_scraping(conn):
     except Exception as e:
         print(f"[MAIN ERROR] Rappi Scraper: {e}", flush=True)
     return total_records
-
-
 class SearchConfigCreate(BaseModel):
     search_term: Optional[str] = None
     keyword: Optional[str] = None
-
-
 @app.get("/")
 def read_root():
     return {"message": "API Monitoreo Activa"}
 
+@app.post("/admin/setup-staging-tables")
+def setup_staging_tables(secret: str = Query(...)):
+    """
+    Endpoint temporal SOLO para inicializar las tablas en un ambiente 
+    de staging vacio. Protegido por una palabra clave simple.
+    BORRAR este endpoint una vez usado.
+    """
+    if secret != "vantik-staging-2026-init":
+        raise HTTPException(status_code=403, detail="Clave incorrecta.")
 
-# --- ENDPOINT ADMIN: LIMPIEZA DE BASE DE DATOS ---
-@app.delete("/admin/clean-db")
-def clean_database(confirm: bool = Query(False)):
-    """Elimina todos los registros de scraper_results para reiniciar la captura."""
-    if not confirm:
-        raise HTTPException(
-            status_code=400, 
-            detail="Se requiere el parámetro ?confirm=true para ejecutar la limpieza."
-        )
     conn = get_db_connection()
+    cursor = conn.cursor()
+    executed = []
     try:
-        with conn.cursor() as cur:
-            cur.execute("TRUNCATE TABLE scraper_results RESTART IDENTITY;")
-            conn.commit()
-            return {
-                "status": "success",
-                "message": "Base de datos truncada correctamente."
-            }
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS retailers (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                code VARCHAR(100) NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE
+            );
+        """)
+        executed.append("retailers creada u ya existia")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS search_configs (
+                id SERIAL PRIMARY KEY,
+                search_term TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE
+            );
+        """)
+        executed.append("search_configs creada u ya existia")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scraper_results (
+                id SERIAL PRIMARY KEY,
+                retailer VARCHAR(100) NOT NULL,
+                search_term VARCHAR(255) NOT NULL,
+                product_name VARCHAR(500) NOT NULL,
+                brand VARCHAR(255),
+                position INTEGER,
+                price NUMERIC(12,2),
+                discount_price NUMERIC(12,2),
+                is_available BOOLEAN DEFAULT TRUE,
+                seller_name VARCHAR(255),
+                captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        executed.append("scraper_results creada u ya existia")
+
+        cursor.execute("SELECT COUNT(*) as total FROM retailers;")
+        count = cursor.fetchone()["total"]
+        if count == 0:
+            cursor.execute("""
+                INSERT INTO retailers (name, code, is_active) VALUES
+                ('Exito', 'exito', TRUE),
+                ('Carulla', 'carulla', TRUE),
+                ('Farmatodo', 'farmatodo', TRUE);
+            """)
+            executed.append("3 retailers base insertados")
+        else:
+            executed.append(f"retailers ya tenia {count} registros, no se insertaron duplicados")
+
+        conn.commit()
+        return {"status": "success", "steps": executed}
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Error al limpiar BD: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
     finally:
+        cursor.close()
         conn.close()
 
 
-# --- ENDPOINT PARA OBTENER OPCIONES DE FILTROS (MARCAS Y PRODUCTOS) ---
 @app.get("/analytics/options")
 def get_filter_options():
-    """Retorna las listas distintas de marcas y productos para los selectores frontend."""
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT DISTINCT COALESCE(brand, 'Sin Marca') as brand FROM scraper_results WHERE brand IS NOT NULL ORDER BY brand ASC;")
             brands = [r["brand"] for r in cur.fetchall()]
-
             cur.execute("SELECT DISTINCT product_name FROM scraper_results WHERE product_name IS NOT NULL ORDER BY product_name ASC;")
             products = [r["product_name"] for r in cur.fetchall()]
-
             return {"brands": brands, "products": products}
     finally:
         conn.close()
-
-
-# --- ENDPOINT ANALYTICS: TABLA DE POSICIONES DEDUPLICADA ---
 @app.get("/analytics/positions")
 def get_positions(
     retailer: Optional[str] = Query(None),
@@ -230,7 +245,6 @@ def get_positions(
     query: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500)
 ):
-    """Obtiene el ranking de posicionamiento deduplicado indicando número de permanencias."""
     conn = get_db_connection()
     try:
         where_clause = " WHERE 1=1"
@@ -250,7 +264,6 @@ def get_positions(
         if query:
             where_clause += " AND product_name ILIKE %s"
             params.append(f"%{query}%")
-
         sql = f"""
             SELECT 
                 retailer,
@@ -277,27 +290,21 @@ def get_positions(
             return cur.fetchall()
     finally:
         conn.close()
-
-
-# --- ENDPOINT ANALYTICS: COMPARADOR HEAD-TO-HEAD DE PRODUCTOS / REFERENCIAS ---
 @app.get("/analytics/compare-products")
 def compare_products(
     product_a: str = Query(..., description="Nombre exacto de la referencia A (Base)"),
     product_b: str = Query(..., description="Nombre exacto de la referencia B (Comparación)"),
     retailer: Optional[str] = Query(None)
 ):
-    """Compara métricas y calcula diferenciales entre dos referencias de productos específicas."""
     conn = get_db_connection()
     try:
         where_clause = " WHERE product_name ILIKE %s"
         params_a = [f"%{product_a}%"]
         params_b = [f"%{product_b}%"]
-
         if retailer and retailer != "ALL":
             where_clause += " AND retailer ILIKE %s"
             params_a.append(f"%{retailer}%")
             params_b.append(f"%{retailer}%")
-
         query_sql = f"""
             SELECT 
                 product_name,
@@ -316,16 +323,13 @@ def compare_products(
             res_a = cur.fetchone() or {}
             cur.execute(query_sql, tuple(params_b))
             res_b = cur.fetchone() or {}
-
         price_a = float(res_a.get("avg_final_price") or 0)
         price_b = float(res_b.get("avg_final_price") or 0)
         price_diff = price_b - price_a
         price_pct = ((price_b - price_a) / price_a * 100) if price_a > 0 else 0
-
         pos_a = float(res_a.get("avg_position") or 0)
         pos_b = float(res_b.get("avg_position") or 0)
         pos_diff = pos_b - pos_a
-
         return {
             "product_a": res_a,
             "product_b": res_b,
@@ -339,9 +343,6 @@ def compare_products(
         }
     finally:
         conn.close()
-
-
-# --- ENDPOINT DE DATOS DEL DASHBOARD POTENCIADO Y FILTRABLE ---
 @app.get("/dashboard-data")
 @app.get("/dashboard-data/")
 def get_dashboard_data(
@@ -350,12 +351,10 @@ def get_dashboard_data(
     date_from: Optional[datetime] = Query(None),
     date_to: Optional[datetime] = Query(None),
 ):
-    """Consolida métricas y cruces comerciales avanzados con soporte para filtros dinámicos."""
     conn = get_db_connection()
     try:
         base_where = " WHERE 1=1"
         params = []
-
         if retailer and retailer != "ALL":
             base_where += " AND retailer ILIKE %s"
             params.append(f"%{retailer}%")
@@ -368,33 +367,25 @@ def get_dashboard_data(
         if date_to:
             base_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
             params.append(date_to)
-
         with conn.cursor() as cur:
-            # 1. Filtros disponibles para desplegables en Frontend
             cur.execute("SELECT DISTINCT retailer FROM scraper_results WHERE retailer IS NOT NULL ORDER BY retailer;")
             available_retailers = [r["retailer"].capitalize() for r in cur.fetchall()]
-
             cur.execute("SELECT DISTINCT search_term FROM scraper_results WHERE search_term IS NOT NULL ORDER BY search_term;")
             available_terms = [r["search_term"] for r in cur.fetchall()]
-
-            # 2. Resumen General y Métricas Clave
             cur.execute(f"""
                 SELECT 
                     COUNT(*) as total_monitored,
                     COUNT(CASE WHEN is_available = FALSE THEN 1 END) as out_of_stock_count,
                     COUNT(DISTINCT retailer) as active_retailers,
                     COUNT(CASE WHEN discount_price > 0 AND discount_price < price THEN 1 END) as discounted_count,
-                    ROUND(AVG(CASE WHEN discount_price > 0 AND discount_price < price THEN ((price - discount_price) / price) * 100 ELSE 0 END)::numeric, 1) as avg_discount_pct
+                    ROUND(AVG(CASE WHEN discount_price > 0 AND discount_price < price THEN ((price - discount_price) / price) * 100 END)::numeric, 1) as avg_discount_pct
                 FROM scraper_results
                 {base_where};
             """, tuple(params))
             summary_row = cur.fetchone()
-
             total = summary_row["total_monitored"] if summary_row and summary_row["total_monitored"] else 0
             stock_out = summary_row["out_of_stock_count"] if summary_row and summary_row["out_of_stock_count"] else 0
             availability = round(((total - stock_out) / total) * 100, 1) if total > 0 else 100.0
-
-            # 3. Share of Shelf Global & Top 10 (Visibilidad)
             cur.execute(f"""
                 SELECT 
                     retailer,
@@ -407,8 +398,6 @@ def get_dashboard_data(
                 GROUP BY retailer;
             """, tuple(params))
             sos_rows = cur.fetchall()
-
-            # 4. Evolución de Precio Promedio por Marca (Essity vs Competencia)
             cur.execute(f"""
                 SELECT 
                     TO_CHAR((captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota'), 'YYYY-MM-DD') as date_label,
@@ -420,8 +409,6 @@ def get_dashboard_data(
                 ORDER BY date_label ASC;
             """, tuple(params))
             price_rows = cur.fetchall()
-
-            # 5. Top Marcas por Presencia (Desglose Comercial)
             cur.execute(f"""
                 SELECT 
                     COALESCE(brand, 'Sin Marca') as brand_name,
@@ -435,7 +422,6 @@ def get_dashboard_data(
                 LIMIT 7;
             """, tuple(params))
             brand_rows = cur.fetchall()
-
         return {
             "filters": {
                 "retailers": available_retailers,
@@ -472,39 +458,13 @@ def get_dashboard_data(
         }
     finally:
         conn.close()
-
-
 @app.get("/dashboard")
 def get_dashboard_page():
-    """Servir la página del dashboard directamente"""
     if os.path.exists("app/dashboard.html"):
         return FileResponse("app/dashboard.html")
     if os.path.exists("dashboard.html"):
         return FileResponse("dashboard.html")
     raise HTTPException(status_code=404, detail="dashboard.html no encontrado.")
-
-
-@app.post("/admin/add-is-active-column")
-def add_is_active_column():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "ALTER TABLE search_configs ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"
-        )
-        conn.commit()
-        return {
-            "status": "success",
-            "message": "Columna is_active agregada correctamente.",
-        }
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        cursor.close()
-        conn.close()
-
-
 @app.get("/retailers")
 @app.get("/retailers/")
 def get_retailers():
@@ -515,8 +475,6 @@ def get_retailers():
     cursor.close()
     conn.close()
     return retailers
-
-
 @app.get("/configs")
 @app.get("/configs/")
 def get_configs():
@@ -527,8 +485,6 @@ def get_configs():
     cursor.close()
     conn.close()
     return configs
-
-
 @app.post("/configs")
 @app.post("/configs/")
 def create_config(config: SearchConfigCreate):
@@ -554,8 +510,6 @@ def create_config(config: SearchConfigCreate):
         cursor.close()
         conn.close()
         raise HTTPException(status_code=400, detail=f"Error guardando: {str(e)}")
-
-
 @app.patch("/configs/{config_id}/toggle")
 def toggle_config(config_id: int):
     conn = get_db_connection()
@@ -583,8 +537,6 @@ def toggle_config(config_id: int):
         raise HTTPException(
             status_code=400, detail=f"Error actualizando estado: {str(e)}"
         )
-
-
 @app.delete("/configs/{config_id}")
 def delete_config(config_id: int):
     conn = get_db_connection()
@@ -611,8 +563,6 @@ def delete_config(config_id: int):
         raise HTTPException(
             status_code=400, detail=f"Error eliminando: {str(e)}"
         )
-
-
 @app.get("/results")
 @app.get("/results/")
 def get_results(
@@ -654,8 +604,6 @@ def get_results(
     cursor.close()
     conn.close()
     return results
-
-
 @app.post("/trigger-now")
 @app.post("/trigger-now/")
 async def trigger_now():
@@ -672,8 +620,6 @@ async def trigger_now():
         return {"status": "error", "message": str(e)}
     finally:
         conn.close()
-
-
 @app.get("/export")
 @app.get("/export/")
 def export_results(
@@ -684,7 +630,6 @@ def export_results(
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
-
     query_tendencia = """
         SELECT 
             id, retailer, search_term, product_name, 
@@ -710,14 +655,12 @@ def export_results(
     query_tendencia += " ORDER BY id DESC;"
     cursor.execute(query_tendencia, tuple(params))
     rows_tendencia = cursor.fetchall()
-
     if not rows_tendencia:
         cursor.close()
         conn.close()
         raise HTTPException(
             status_code=404, detail="No se encontraron datos para exportar."
         )
-
     query_resumen = """
         SELECT DISTINCT ON (retailer, search_term, product_name)
             id, retailer, search_term, product_name, 
@@ -744,19 +687,15 @@ def export_results(
     query_resumen += " ORDER BY retailer, search_term, product_name, id DESC;"
     cursor.execute(query_resumen, tuple(params_resumen))
     rows_resumen = cursor.fetchall()
-
     cursor.close()
     conn.close()
-
     df_tendencia = pd.DataFrame(rows_tendencia)
     df_resumen = pd.DataFrame(rows_resumen)
-
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_resumen.to_excel(writer, sheet_name="Resumen", index=False)
         df_tendencia.to_excel(writer, sheet_name="Tendencia", index=False)
     output.seek(0)
-
     filename = f"digital_shelf_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     headers = {"Content-Disposition": f"attachment; filename={filename}"}
     return StreamingResponse(
@@ -764,23 +703,3 @@ def export_results(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers,
     )
-
-
-@app.get("/exec-sql")
-def execute_sql_query(sql: str):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            if cur.description:
-                results = cur.fetchall()
-                conn.commit()
-                return {"status": "ok", "data": results}
-            else:
-                conn.commit()
-                return {"status": "ok", "message": f"Filas afectadas: {cur.rowcount}"}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=400, detail=f"Error SQL: {str(e)}")
-    finally:
-        conn.close()
