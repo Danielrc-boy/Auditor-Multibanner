@@ -1,19 +1,33 @@
-import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-from dotenv import load_dotenv
+"""
+Módulo de conexión a base de datos.
 
-load_dotenv()
+Toda la app obtiene su conexión a Postgres a través de get_db_connection().
+Centralizar esto aquí significa que un cambio en cómo nos conectamos
+(por ejemplo, agregar un pool de conexiones más adelante) se hace en
+un solo lugar, no en cada archivo de rutas.
+"""
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from fastapi import HTTPException
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
 
-def get_db():
-    db = SessionLocal()
+def get_db_connection():
+    """
+    Abre y devuelve una conexión nueva a Postgres.
+    Lanza un HTTPException 500 si DATABASE_URL no está configurada
+    o si la conexión falla, para que FastAPI devuelva un error claro
+    en vez de que la app truene sin explicación.
+    """
+    if not DATABASE_URL:
+        raise HTTPException(
+            status_code=500,
+            detail="Error BD: La variable DATABASE_URL no está configurada.",
+        )
     try:
-        yield db
-    finally:
-        db.close()
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error BD: {str(e)}")

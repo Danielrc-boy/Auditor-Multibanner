@@ -1,19 +1,26 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from typing import List
-from app.database import get_db
-from app import models, schemas
+"""
+Rutas relacionadas con retailers (Éxito, Carulla, Farmatodo, etc).
 
-router = APIRouter(prefix="/retailers", tags=["Retailers"])
+Este router se conecta a la app principal en main.py con:
+    app.include_router(retailers.router)
 
-@router.get("/", response_model=List[schemas.RetailerResponse])
-def list_retailers(db: Session = Depends(get_db)):
-    return db.query(models.Retailer).all()
+Cuando agreguemos un retailer nuevo (La Rebaja, Falabella...), este
+archivo NO cambia -- el retailer nuevo se agrega como una fila en la
+tabla `retailers`, no como código nuevo aquí.
+"""
+from fastapi import APIRouter
+from app.database import get_db_connection
 
-@router.post("/", response_model=schemas.RetailerResponse)
-def create_retailer(retailer: schemas.RetailerCreate, db: Session = Depends(get_db)):
-    db_obj = models.Retailer(**retailer.model_dump())
-    db.add(db_obj)
-    db.commit()
-    db.refresh(db_obj)
-    return db_obj
+router = APIRouter(tags=["retailers"])
+
+
+@router.get("/retailers")
+@router.get("/retailers/")
+def get_retailers():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM retailers WHERE is_active = TRUE;")
+    retailers = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return retailers

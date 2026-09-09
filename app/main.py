@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from app.routers import retailers
 app = FastAPI()
 origins = [
     "https://auditor-multibanner.vercel.app",
@@ -24,6 +25,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+app.include_router(retailers.router)
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 def get_db_connection():
     if not DATABASE_URL:
@@ -391,16 +395,6 @@ def get_dashboard_page():
     if os.path.exists("dashboard.html"):
         return FileResponse("dashboard.html")
     raise HTTPException(status_code=404, detail="dashboard.html no encontrado.")
-@app.get("/retailers")
-@app.get("/retailers/")
-def get_retailers():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM retailers WHERE is_active = TRUE;")
-    retailers = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return retailers
 @app.get("/configs")
 @app.get("/configs/")
 def get_configs():
