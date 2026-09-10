@@ -110,6 +110,7 @@ class RappiScraper:
 
     def _parse_html(self, html: str, search_term: str, limit: int) -> List[ExtractedProductData]:
         blocks = LD_JSON_BLOCK_RE.findall(html)
+        print(f"[DIAG RAPPI] Bloques ld+json encontrados en el HTML: {len(blocks)}", flush=True)
         seen_urls = set()
         parsed: List[ExtractedProductData] = []
         position_counter = 1
@@ -125,6 +126,7 @@ class RappiScraper:
                 items = data.get("itemListElement", [])
             elif isinstance(data, list):
                 items = data
+            print(f"[DIAG RAPPI] Bloque procesado: tipo={data.get('@type') if isinstance(data, dict) else type(data).__name__} | items encontrados={len(items)}", flush=True)
 
             for entry in items:
                 if position_counter > limit:
@@ -167,6 +169,7 @@ class RappiScraper:
                         for variant in term_variants
                     )
                     if not is_relevant:
+                        print(f"[DIAG RAPPI] Descartado por relevancia: '{name}' (termino: '{search_term}')", flush=True)
                         continue
 
                     offer = item.get("offers", {}) or {}
