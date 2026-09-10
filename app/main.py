@@ -44,3 +44,13 @@ def get_dashboard_page():
     if os.path.exists("dashboard.html"):
         return FileResponse("dashboard.html")
     raise HTTPException(status_code=404, detail="dashboard.html no encontrado.")
+
+
+# --- ENDPOINT TEMPORAL DE PRUEBA: solo para validar Cruz Verde antes de ---
+# --- integrarlo al flujo completo de guardado. Se retira despues de confirmar. ---
+@app.get("/admin/test-cruzverde")
+async def test_cruzverde(q: str = "toallas"):
+    from app.services.scrapers.cruzverde_scraper import CruzVerdeScraper
+    scraper = CruzVerdeScraper()
+    results_list = await scraper.search_keyword(q, limit=10)
+    return {"total": len(results_list), "productos": [r.dict() for r in results_list]}
