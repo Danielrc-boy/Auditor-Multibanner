@@ -69,8 +69,9 @@ class CruzVerdeScraper:
         generated_opaque_user_id, in-session) antes de intentar buscar.
         """
         try:
-            await client.get(self.homepage_url, headers=self.headers)
-            print("[DIAG CRUZVERDE] Sesión de invitado inicializada (cookies obtenidas).", flush=True)
+            home_response = await client.get(self.homepage_url, headers=self.headers)
+            cookie_names = list(client.cookies.keys())
+            print(f"[DIAG CRUZVERDE] Status de la home: {home_response.status_code} | Cookies obtenidas: {cookie_names}", flush=True)
         except Exception as e:
             print(f"[ERROR CRUZVERDE] No se pudo inicializar sesión: {e}", flush=True)
 
