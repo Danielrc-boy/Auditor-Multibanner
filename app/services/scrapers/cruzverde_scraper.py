@@ -72,6 +72,9 @@ class CruzVerdeScraper:
             "api_key": SCRAPERAPI_KEY,
             "url": target_url,
             "session_number": self._scraperapi_session,
+            # Cruz Verde confirmó (vía mensaje de error de ScraperAPI) que
+            # necesita proxys residenciales -- el modo estándar no basta.
+            "premium": "true",
         }
         if render:
             params["render"] = "true"
