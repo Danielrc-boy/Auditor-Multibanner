@@ -19,12 +19,16 @@ distintos a lo esperado en otras ciudades, este es el primer parámetro
 a revisar.
 """
 import os
+import random
+import urllib.parse
 import httpx
 from typing import List, Optional
 from pydantic import BaseModel
 
 # Confirmado por captura real de DevTools -- zona de inventario de Bogotá.
 DEFAULT_INVENTORY_ZONE = "COCV_zona64"
+
+SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
 
 
 class ExtractedProductData(BaseModel):
@@ -57,6 +61,22 @@ class CruzVerdeScraper:
         # en vez de "calentar" la sesión en cada término buscado.
         self._client: Optional[httpx.AsyncClient] = None
 
+        # session_number le dice a ScraperAPI que use la MISMA IP y sesión
+        # para todas las peticiones de esta instancia -- indispensable para
+        # que la cookie obtenida al calentar la sesión sobreviva hasta la
+        # búsqueda real.
+        self._scraperapi_session = random.randint(1, 1_000_000)
+
+    def _via_scraperapi(self, target_url: str, render: bool = False) -> tuple:
+        params = {
+            "api_key": SCRAPERAPI_KEY,
+            "url": target_url,
+            "session_number": self._scraperapi_session,
+        }
+        if render:
+            params["render"] = "true"
+        return "http://api.scraperapi.com/", params
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=False)
@@ -67,16 +87,27 @@ class CruzVerdeScraper:
         Visita la página principal para que Salesforce Commerce Cloud
         entregue las cookies de sesión de invitado (basket-id, customer-id,
         generated_opaque_user_id, in-session) antes de intentar buscar.
+
+        Se enruta vía ScraperAPI con "render=true": confirmamos con evidencia
+        real que una petición directa (sin ScraperAPI) recibe 200 pero SIN
+        ninguna cookie -- señal de que el sitio distingue tráfico de servidor
+        vs. navegador real (protección similar a la que ya resolvimos en Éxito).
+        render=true ejecuta un navegador real del lado de ScraperAPI, necesario
+        si las cookies se generan con JavaScript en vez de un header simple.
         """
         try:
-            home_response = await client.get(self.homepage_url, headers=self.headers)
+            if SCRAPERAPI_KEY:
+                request_url, request_params = self._via_scraperapi(self.homepage_url, render=True)
+                home_response = await client.get(request_url, headers=self.headers, params=request_params)
+            else:
+                home_response = await client.get(self.homepage_url, headers=self.headers)
             cookie_names = list(client.cookies.keys())
             print(f"[DIAG CRUZVERDE] Status de la home: {home_response.status_code} | Cookies obtenidas: {cookie_names}", flush=True)
         except Exception as e:
             print(f"[ERROR CRUZVERDE] No se pudo inicializar sesión: {e}", flush=True)
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
-        params = {
+        search_params = {
             "limit": limit,
             "offset": 0,
             "sort": "",
@@ -91,15 +122,21 @@ class CruzVerdeScraper:
         if not client.cookies:
             await self._warm_up_session(client)
 
+        if SCRAPERAPI_KEY:
+            target_url = f"{self.base_url}?{urllib.parse.urlencode(search_params)}"
+            request_url, request_params = self._via_scraperapi(target_url, render=False)
+        else:
+            request_url, request_params = self.base_url, search_params
+
         try:
-            response = await client.get(self.base_url, headers=self.headers, params=params)
+            response = await client.get(request_url, headers=self.headers, params=request_params)
             print(f"[DIAG CRUZVERDE] Status recibido: {response.status_code}", flush=True)
 
             # Si la sesión expiró a mitad de la corrida, se renueva UNA vez y se reintenta.
             if response.status_code == 401:
                 print("[DIAG CRUZVERDE] Sesión expirada, renovando y reintentando...", flush=True)
                 await self._warm_up_session(client)
-                response = await client.get(self.base_url, headers=self.headers, params=params)
+                response = await client.get(request_url, headers=self.headers, params=request_params)
                 print(f"[DIAG CRUZVERDE] Status tras reintento: {response.status_code}", flush=True)
 
             if response.status_code != 200:
