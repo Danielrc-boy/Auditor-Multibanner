@@ -52,6 +52,8 @@ class CruzVerdeScraper:
                 "Chrome/122.0.0.0 Safari/537.36"
             ),
             "Accept": "application/json",
+            "Origin": "https://www.cruzverde.com.co",
+            "Referer": "https://www.cruzverde.com.co/",
         }
 
     def _build_request(self, params: dict):
@@ -77,10 +79,16 @@ class CruzVerdeScraper:
                 print(f"[DIAG CRUZVERDE] Status recibido: {response.status_code}", flush=True)
 
                 if response.status_code != 200:
-                    print(f"[ERROR CRUZVERDE] HTTP Status {response.status_code} para '{keyword}'", flush=True)
+                    print(f"[ERROR CRUZVERDE] HTTP Status {response.status_code} para '{keyword}' | Body: {response.text[:300]}", flush=True)
                     return []
 
                 data = response.json()
+                total_hits = data.get("count", "desconocido")
+                num_hits_array = len(data.get("hits", []))
+                print(f"[DIAG CRUZVERDE] count reportado por la API: {total_hits} | items en 'hits': {num_hits_array}", flush=True)
+                if num_hits_array == 0:
+                    print(f"[DIAG CRUZVERDE] Respuesta cruda (primeros 500 caracteres): {response.text[:500]}", flush=True)
+
                 return self._parse_response(data, keyword, limit)
 
         except Exception as e:
