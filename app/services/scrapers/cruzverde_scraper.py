@@ -19,13 +19,9 @@ distintos a lo esperado en otras ciudades, este es el primer parámetro
 a revisar.
 """
 import os
-import urllib.parse
 import httpx
 from typing import List, Optional
 from pydantic import BaseModel
-
-SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
-CRUZVERDE_USE_SCRAPERAPI = os.getenv("CRUZVERDE_USE_SCRAPERAPI", "false").lower() == "true"
 
 # Confirmado por captura real de DevTools -- zona de inventario de Bogotá.
 DEFAULT_INVENTORY_ZONE = "COCV_zona64"
@@ -44,6 +40,7 @@ class ExtractedProductData(BaseModel):
 class CruzVerdeScraper:
     def __init__(self, inventory_zone: str = DEFAULT_INVENTORY_ZONE):
         self.base_url = "https://api.cruzverde.com.co/product-service/products/search"
+        self.homepage_url = "https://www.cruzverde.com.co/"
         self.inventory_zone = inventory_zone
         self.headers = {
             "User-Agent": (
@@ -55,12 +52,27 @@ class CruzVerdeScraper:
             "Origin": "https://www.cruzverde.com.co",
             "Referer": "https://www.cruzverde.com.co/",
         }
+        # El cliente se mantiene abierto entre búsquedas para reutilizar la
+        # misma sesión (cookies) durante toda una corrida de monitoreo,
+        # en vez de "calentar" la sesión en cada término buscado.
+        self._client: Optional[httpx.AsyncClient] = None
 
-    def _build_request(self, params: dict):
-        if CRUZVERDE_USE_SCRAPERAPI and SCRAPERAPI_KEY:
-            target_url = f"{self.base_url}?{urllib.parse.urlencode(params)}"
-            return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": target_url}
-        return self.base_url, params
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=False)
+        return self._client
+
+    async def _warm_up_session(self, client: httpx.AsyncClient):
+        """
+        Visita la página principal para que Salesforce Commerce Cloud
+        entregue las cookies de sesión de invitado (basket-id, customer-id,
+        generated_opaque_user_id, in-session) antes de intentar buscar.
+        """
+        try:
+            await client.get(self.homepage_url, headers=self.headers)
+            print("[DIAG CRUZVERDE] Sesión de invitado inicializada (cookies obtenidas).", flush=True)
+        except Exception as e:
+            print(f"[ERROR CRUZVERDE] No se pudo inicializar sesión: {e}", flush=True)
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
         params = {
@@ -71,25 +83,36 @@ class CruzVerdeScraper:
             "inventoryId": self.inventory_zone,
             "inventoryZone": self.inventory_zone,
         }
-        request_url, request_params = self._build_request(params)
+
+        client = await self._get_client()
+
+        # Primera vez que se usa este scraper: calienta la sesión.
+        if not client.cookies:
+            await self._warm_up_session(client)
 
         try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=False) as client:
-                response = await client.get(request_url, headers=self.headers, params=request_params)
-                print(f"[DIAG CRUZVERDE] Status recibido: {response.status_code}", flush=True)
+            response = await client.get(self.base_url, headers=self.headers, params=params)
+            print(f"[DIAG CRUZVERDE] Status recibido: {response.status_code}", flush=True)
 
-                if response.status_code != 200:
-                    print(f"[ERROR CRUZVERDE] HTTP Status {response.status_code} para '{keyword}' | Body: {response.text[:300]}", flush=True)
-                    return []
+            # Si la sesión expiró a mitad de la corrida, se renueva UNA vez y se reintenta.
+            if response.status_code == 401:
+                print("[DIAG CRUZVERDE] Sesión expirada, renovando y reintentando...", flush=True)
+                await self._warm_up_session(client)
+                response = await client.get(self.base_url, headers=self.headers, params=params)
+                print(f"[DIAG CRUZVERDE] Status tras reintento: {response.status_code}", flush=True)
 
-                data = response.json()
-                total_hits = data.get("count", "desconocido")
-                num_hits_array = len(data.get("hits", []))
-                print(f"[DIAG CRUZVERDE] count reportado por la API: {total_hits} | items en 'hits': {num_hits_array}", flush=True)
-                if num_hits_array == 0:
-                    print(f"[DIAG CRUZVERDE] Respuesta cruda (primeros 500 caracteres): {response.text[:500]}", flush=True)
+            if response.status_code != 200:
+                print(f"[ERROR CRUZVERDE] HTTP Status {response.status_code} para '{keyword}' | Body: {response.text[:300]}", flush=True)
+                return []
 
-                return self._parse_response(data, keyword, limit)
+            data = response.json()
+            total_hits = data.get("count", "desconocido")
+            num_hits_array = len(data.get("hits", []))
+            print(f"[DIAG CRUZVERDE] count reportado por la API: {total_hits} | items en 'hits': {num_hits_array}", flush=True)
+            if num_hits_array == 0:
+                print(f"[DIAG CRUZVERDE] Respuesta cruda (primeros 500 caracteres): {response.text[:500]}", flush=True)
+
+            return self._parse_response(data, keyword, limit)
 
         except Exception as e:
             print(f"[ERROR CRUZVERDE] Error al scrapear '{keyword}': {e}", flush=True)
