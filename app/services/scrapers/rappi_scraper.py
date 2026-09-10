@@ -143,6 +143,32 @@ class RappiScraper:
                     if not name:
                         continue
 
+                    brand = _infer_brand(name)
+
+                    # Filtro de relevancia: descarta productos de carruseles ajenos
+                    # a la búsqueda (tendencias, recomendados, etc.) que no tienen
+                    # relación real con el término -- mismo problema que ya
+                    # resolvimos antes con Farmatodo ("Agua Brisa" al buscar "Nosotras").
+                    #
+                    # Se acepta también la forma singular del término buscado
+                    # (ej. buscar "toallas" debe encontrar productos que digan
+                    # "Toalla" en singular), ya que la coincidencia es de texto
+                    # simple, sin analisis linguistico completo.
+                    term_normalized = _normalize(search_term)
+                    name_normalized = _normalize(name)
+                    brand_normalized = _normalize(brand)
+
+                    term_variants = {term_normalized}
+                    if term_normalized.endswith("s") and len(term_normalized) > 3:
+                        term_variants.add(term_normalized[:-1])
+
+                    is_relevant = any(
+                        variant in name_normalized or variant in brand_normalized
+                        for variant in term_variants
+                    )
+                    if not is_relevant:
+                        continue
+
                     offer = item.get("offers", {}) or {}
                     price = float(offer.get("price", 0.0) or 0.0)
                     availability = offer.get("availability", "")
@@ -155,7 +181,7 @@ class RappiScraper:
                             search_keyword=search_term,
                             search_position=position_counter,
                             title=name,
-                            brand=_infer_brand(name),
+                            brand=brand,
                             base_price=price,
                             discount_price=None,  # no disponible en este formato de datos
                             in_stock=in_stock,
