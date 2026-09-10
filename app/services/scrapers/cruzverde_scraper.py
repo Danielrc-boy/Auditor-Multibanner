@@ -79,7 +79,10 @@ class CruzVerdeScraper:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=False)
+            # timeout amplio: cuando se usa ScraperAPI con render=true,
+            # ejecutar un navegador real del lado de ScraperAPI puede
+            # tardar bastante mas que una peticion simple.
+            self._client = httpx.AsyncClient(timeout=90.0, follow_redirects=True, verify=False)
         return self._client
 
     async def _warm_up_session(self, client: httpx.AsyncClient):
@@ -99,12 +102,17 @@ class CruzVerdeScraper:
             if SCRAPERAPI_KEY:
                 request_url, request_params = self._via_scraperapi(self.homepage_url, render=True)
                 home_response = await client.get(request_url, headers=self.headers, params=request_params)
+                # Con ScraperAPI + session_number, las cookies quedan guardadas
+                # del lado de ScraperAPI (no en nuestro cliente local) -- por
+                # diseño, este print SIEMPRE mostrará una lista vacía aquí.
+                # No es evidencia de fallo; solo confirma que la petición respondió.
+                print(f"[DIAG CRUZVERDE] Status de la home (vía ScraperAPI): {home_response.status_code}", flush=True)
             else:
                 home_response = await client.get(self.homepage_url, headers=self.headers)
-            cookie_names = list(client.cookies.keys())
-            print(f"[DIAG CRUZVERDE] Status de la home: {home_response.status_code} | Cookies obtenidas: {cookie_names}", flush=True)
+                cookie_names = list(client.cookies.keys())
+                print(f"[DIAG CRUZVERDE] Status de la home: {home_response.status_code} | Cookies obtenidas: {cookie_names}", flush=True)
         except Exception as e:
-            print(f"[ERROR CRUZVERDE] No se pudo inicializar sesión: {e}", flush=True)
+            print(f"[ERROR CRUZVERDE] No se pudo inicializar sesión: {type(e).__name__}: {e!r}", flush=True)
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
         search_params = {
@@ -153,7 +161,7 @@ class CruzVerdeScraper:
             return self._parse_response(data, keyword, limit)
 
         except Exception as e:
-            print(f"[ERROR CRUZVERDE] Error al scrapear '{keyword}': {e}", flush=True)
+            print(f"[ERROR CRUZVERDE] Error al scrapear '{keyword}': {type(e).__name__}: {e!r}", flush=True)
             return []
 
     def _extract_prices(self, prices: dict):
