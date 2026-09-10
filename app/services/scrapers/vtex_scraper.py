@@ -17,15 +17,38 @@ class ExtractedProductData(BaseModel):
     in_stock: bool = True
 
 
+# Configuración por retailer: aquí es donde se agrega cada tienda nueva de VTEX
+# (La Rebaja, y a futuro cualquier otra que use esta misma plataforma), sin
+# tener que tocar la lógica de búsqueda ni de parseo.
+RETAILER_CONFIGS = {
+    "exito": {
+        "base_url": "https://www.exito.com",
+        "search_style": "path",   # /io/api/catalog_system/pub/products/search/{keyword}
+        "use_io_prefix": True,
+        "use_scraperapi": True,   # bloqueo 403 confirmado sin proxy
+    },
+    "carulla": {
+        "base_url": "https://www.carulla.com",
+        "search_style": "path",
+        "use_io_prefix": True,
+        "use_scraperapi": True,
+    },
+    "larebaja": {
+        "base_url": "https://www.larebajavirtual.com",
+        "search_style": "ft_param",  # /api/catalog_system/pub/products/search?ft={keyword}
+        "use_io_prefix": False,
+        "use_scraperapi": False,  # sin bloqueo confirmado hasta ahora
+    },
+}
+
+DEFAULT_CONFIG = RETAILER_CONFIGS["exito"]
+
+
 class VTEXScraper:
     def __init__(self, retailer: str, base_url: str = None):
         self.retailer = retailer.lower()
-        if base_url:
-            self.base_url = base_url.rstrip("/")
-        elif self.retailer == "carulla":
-            self.base_url = "https://www.carulla.com"
-        else:
-            self.base_url = "https://www.exito.com"
+        self.config = RETAILER_CONFIGS.get(self.retailer, DEFAULT_CONFIG)
+        self.base_url = (base_url.rstrip("/") if base_url else self.config["base_url"])
         self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -37,23 +60,24 @@ class VTEXScraper:
         }
 
     def _build_request(self, target_url: str):
-        if SCRAPERAPI_KEY:
+        if self.config.get("use_scraperapi") and SCRAPERAPI_KEY:
             return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": target_url}
         return target_url, None
 
+    def _build_search_url(self, encoded_keyword: str, limit: int) -> str:
+        io_prefix = "/io" if self.config.get("use_io_prefix") else ""
+        if self.config["search_style"] == "ft_param":
+            return f"{self.base_url}{io_prefix}/api/catalog_system/pub/products/search?ft={encoded_keyword}&_from=0&_to={limit - 1}"
+        # estilo "path", el de Exito/Carulla
+        return f"{self.base_url}{io_prefix}/api/catalog_system/pub/products/search/{encoded_keyword}?_from=0&_to={limit - 1}"
+
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
         encoded_keyword = urllib.parse.quote(keyword)
-
-        target_url = (
-            f"{self.base_url}/io/api/catalog_system/pub/products/search/{encoded_keyword}"
-            f"?_from=0&_to={limit - 1}"
-        )
+        target_url = self._build_search_url(encoded_keyword, limit)
         request_url, params = self._build_request(target_url)
 
-        # DIAGNÓSTICO: confirma en el log exacto qué está pasando en este momento
-        key_status = f"SÍ ({SCRAPERAPI_KEY[:6]}...)" if SCRAPERAPI_KEY else "NO - VACÍA"
-        via = "ScraperAPI" if SCRAPERAPI_KEY else "DIRECTO (sin proxy)"
-        print(f"[DIAG {self.retailer.upper()}] Key cargada: {key_status} | Petición vía: {via}", flush=True)
+        key_status = f"SÍ ({SCRAPERAPI_KEY[:6]}...)" if (self.config.get("use_scraperapi") and SCRAPERAPI_KEY) else "NO / directo"
+        print(f"[DIAG {self.retailer.upper()}] Petición vía: {key_status} | URL base: {target_url}", flush=True)
 
         extracted_products: List[ExtractedProductData] = []
 
@@ -63,8 +87,9 @@ class VTEXScraper:
                 print(f"[DIAG {self.retailer.upper()}] Status recibido: {response.status_code}", flush=True)
 
                 if response.status_code not in (200, 206):
+                    io_prefix = "/io" if self.config.get("use_io_prefix") else ""
                     fallback_target = (
-                        f"{self.base_url}/io/api/io/_v/api/intelligent-search/product_search/{encoded_keyword}"
+                        f"{self.base_url}{io_prefix}/_v/api/intelligent-search/product_search/{encoded_keyword}"
                         f"?page=1&count={limit}"
                     )
                     fb_url, fb_params = self._build_request(fallback_target)
@@ -140,11 +165,12 @@ async def run_vtex_scraping(conn) -> int:
     if not search_configs:
         return 0
 
-    from app.main import save_scraper_results
+    # FIX: antes apuntaba a app.main, que ya no tiene esta funcion desde el refactor.
+    from app.services.scraping_orchestrator import save_scraper_results
 
     total_saved = 0
     for term in search_configs:
-        for retailer in ["exito", "carulla"]:
+        for retailer in ["exito", "carulla", "larebaja"]:
             scraper = VTEXScraper(retailer=retailer)
             try:
                 results = await scraper.search_keyword(term, limit=50)
