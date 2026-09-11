@@ -101,12 +101,13 @@ class CafamScraper:
                 if item.get("has_discount") and item.get("price_amount") is not None:
                     discount_price = float(item["price_amount"])
 
-                # Usa la posicion que reporta la propia plataforma (ordenada
-                # por relevancia); si no viene, se numera por orden de llegada.
-                try:
-                    position = int(item.get("position", idx))
-                except (TypeError, ValueError):
-                    position = idx
+                # NOTA: se descarto usar el campo "position" que trae la
+                # propia plataforma -- confirmado con datos reales que no
+                # refleja el orden de aparicion en la busqueda (varios
+                # productos distintos venian con el mismo valor). Se numera
+                # por el orden real en que llegan los resultados, igual
+                # que se hace con Rappi.
+                position = idx
 
                 parsed.append(
                     ExtractedProductData(
