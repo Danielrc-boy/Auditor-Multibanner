@@ -72,9 +72,9 @@ class CruzVerdeScraper:
             "api_key": SCRAPERAPI_KEY,
             "url": target_url,
             "session_number": self._scraperapi_session,
-            # Cruz Verde confirmó (vía mensaje de error de ScraperAPI) que
-            # necesita proxys residenciales -- el modo estándar no basta.
-            "premium": "true",
+            # premium=true no fue suficiente (confirmado en logs reales) --
+            # se sube a ultra_premium, el nivel mas alto de proxy residencial.
+            "ultra_premium": "true",
         }
         if render:
             params["render"] = "true"
@@ -104,11 +104,10 @@ class CruzVerdeScraper:
         try:
             if SCRAPERAPI_KEY:
                 request_url, request_params = self._via_scraperapi(self.homepage_url, render=True)
-                home_response = await client.get(request_url, headers=self.headers, params=request_params)
-                # Con ScraperAPI + session_number, las cookies quedan guardadas
-                # del lado de ScraperAPI (no en nuestro cliente local) -- por
-                # diseño, este print SIEMPRE mostrará una lista vacía aquí.
-                # No es evidencia de fallo; solo confirma que la petición respondió.
+                # Al pasar por ScraperAPI NO se envían nuestros headers propios --
+                # esos son para el sitio destino, no para el proxy en sí.
+                # ScraperAPI genera sus propios headers optimizados hacia Cruz Verde.
+                home_response = await client.get(request_url, params=request_params)
                 print(f"[DIAG CRUZVERDE] Status de la home (vía ScraperAPI): {home_response.status_code}", flush=True)
             else:
                 home_response = await client.get(self.homepage_url, headers=self.headers)
@@ -136,18 +135,20 @@ class CruzVerdeScraper:
         if SCRAPERAPI_KEY:
             target_url = f"{self.base_url}?{urllib.parse.urlencode(search_params)}"
             request_url, request_params = self._via_scraperapi(target_url, render=False)
+            request_headers = None  # ScraperAPI genera sus propios headers hacia el destino
         else:
             request_url, request_params = self.base_url, search_params
+            request_headers = self.headers
 
         try:
-            response = await client.get(request_url, headers=self.headers, params=request_params)
+            response = await client.get(request_url, headers=request_headers, params=request_params)
             print(f"[DIAG CRUZVERDE] Status recibido: {response.status_code}", flush=True)
 
             # Si la sesión expiró a mitad de la corrida, se renueva UNA vez y se reintenta.
             if response.status_code == 401:
                 print("[DIAG CRUZVERDE] Sesión expirada, renovando y reintentando...", flush=True)
                 await self._warm_up_session(client)
-                response = await client.get(request_url, headers=self.headers, params=request_params)
+                response = await client.get(request_url, headers=request_headers, params=request_params)
                 print(f"[DIAG CRUZVERDE] Status tras reintento: {response.status_code}", flush=True)
 
             if response.status_code != 200:
