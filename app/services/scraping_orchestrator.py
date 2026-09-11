@@ -1,12 +1,12 @@
 """
 Orquestación del scraping: guardar resultados en la base de datos,
-y coordinar la ejecución de los 3 (o más, a futuro) retailers.
+y coordinar la ejecución de todos los retailers no-VTEX
+(Farmatodo, Rappi, Cafam -- los VTEX se coordinan aparte, dentro de
+vtex_scraper.py, en run_vtex_scraping).
 
-Principio clave, aprendido de los incidentes de esta semana:
-cada retailer corre dentro de su propio try/except en run_all_scraping.
-Si Rappi falla por completo, Éxito, Carulla y Farmatodo deben seguir
-guardando datos con normalidad -- un retailer roto nunca debe tumbar
-a los demás.
+Principio clave: cada retailer corre dentro de su propio try/except.
+Si uno falla por completo, los demás deben seguir guardando datos
+con normalidad -- un retailer roto nunca debe tumbar a los demás.
 """
 
 
@@ -113,6 +113,33 @@ async def run_rappi_scraping(conn):
     return total_saved
 
 
+async def run_cafam_scraping(conn):
+    search_configs = []
+    with conn.cursor() as cur:
+        cur.execute("SELECT search_term FROM search_configs WHERE is_active = TRUE;")
+        rows = cur.fetchall()
+        search_configs = [r["search_term"] for r in rows] if rows else []
+    if not search_configs:
+        return 0
+    total_saved = 0
+    from app.services.scrapers.cafam_scraper import CafamScraper
+
+    print("\n[SCRAPING] Iniciando extracción para: CAFAM", flush=True)
+    scraper = CafamScraper()
+    for term in search_configs:
+        try:
+            results = await scraper.search_keyword(term, limit=50)
+            if results:
+                count = save_scraper_results(conn, results, retailer="cafam")
+                total_saved += count
+                print(f"[CAFAM] Guardados {count} para '{term}'.", flush=True)
+            else:
+                print(f"[CAFAM] Sin resultados para '{term}'.", flush=True)
+        except Exception as e:
+            print(f"[SCRAPING ERROR] CAFAM '{term}': {e}", flush=True)
+    return total_saved
+
+
 async def run_all_scraping(conn):
     total_records = 0
     try:
@@ -129,4 +156,8 @@ async def run_all_scraping(conn):
         total_records += await run_rappi_scraping(conn)
     except Exception as e:
         print(f"[MAIN ERROR] Rappi Scraper: {e}", flush=True)
+    try:
+        total_records += await run_cafam_scraping(conn)
+    except Exception as e:
+        print(f"[MAIN ERROR] Cafam Scraper: {e}", flush=True)
     return total_records
