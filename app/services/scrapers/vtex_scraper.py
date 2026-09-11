@@ -45,6 +45,12 @@ RETAILER_CONFIGS = {
         "use_io_prefix": False,    # confirmado: SIN /io/ delante (a diferencia de Exito/Carulla)
         "use_scraperapi": False,   # sin bloqueo confirmado hasta ahora
     },
+    "colsubsidio": {
+        "base_url": "https://www.drogueriascolsubsidio.com",
+        "search_style": "path",    # confirmado: /api/catalog_system/pub/products/search/{keyword}
+        "use_io_prefix": False,    # confirmado: SIN /io/ delante
+        "use_scraperapi": False,   # sin bloqueo confirmado hasta ahora
+    },
 }
 
 DEFAULT_CONFIG = RETAILER_CONFIGS["exito"]
@@ -174,7 +180,7 @@ async def run_vtex_scraping(conn) -> int:
 
     total_saved = 0
     for term in search_configs:
-        for retailer in ["exito", "carulla", "larebaja", "locatel"]:
+        for retailer in ["exito", "carulla", "larebaja", "locatel", "colsubsidio"]:
             scraper = VTEXScraper(retailer=retailer)
             try:
                 results = await scraper.search_keyword(term, limit=50)
