@@ -17,13 +17,13 @@ class ExtractedProductData(BaseModel):
     in_stock: bool = True
 
 
-# Configuración por retailer: aquí es donde se agrega cada tienda nueva de VTEX
-# (La Rebaja, y a futuro cualquier otra que use esta misma plataforma), sin
-# tener que tocar la lógica de búsqueda ni de parseo.
+# Configuración por retailer: para agregar un VTEX nuevo (Falabella, etc.),
+# solo hace falta una entrada nueva aquí -- confirmando antes, con evidencia
+# real de navegador, cada uno de estos 4 valores.
 RETAILER_CONFIGS = {
     "exito": {
         "base_url": "https://www.exito.com",
-        "search_style": "path",   # /io/api/catalog_system/pub/products/search/{keyword}
+        "search_style": "path",
         "use_io_prefix": True,
         "use_scraperapi": True,   # bloqueo 403 confirmado sin proxy
     },
@@ -35,9 +35,15 @@ RETAILER_CONFIGS = {
     },
     "larebaja": {
         "base_url": "https://www.larebajavirtual.com",
-        "search_style": "ft_param",  # /api/catalog_system/pub/products/search?ft={keyword}
+        "search_style": "ft_param",
         "use_io_prefix": False,
-        "use_scraperapi": False,  # sin bloqueo confirmado hasta ahora
+        "use_scraperapi": False,
+    },
+    "locatel": {
+        "base_url": "https://www.locatelcolombia.com",
+        "search_style": "path",    # confirmado: /api/catalog_system/pub/products/search/{keyword}
+        "use_io_prefix": False,    # confirmado: SIN /io/ delante (a diferencia de Exito/Carulla)
+        "use_scraperapi": False,   # sin bloqueo confirmado hasta ahora
     },
 }
 
@@ -68,7 +74,6 @@ class VTEXScraper:
         io_prefix = "/io" if self.config.get("use_io_prefix") else ""
         if self.config["search_style"] == "ft_param":
             return f"{self.base_url}{io_prefix}/api/catalog_system/pub/products/search?ft={encoded_keyword}&_from=0&_to={limit - 1}"
-        # estilo "path", el de Exito/Carulla
         return f"{self.base_url}{io_prefix}/api/catalog_system/pub/products/search/{encoded_keyword}?_from=0&_to={limit - 1}"
 
     async def search_keyword(self, keyword: str, limit: int = 50) -> List[ExtractedProductData]:
@@ -165,12 +170,11 @@ async def run_vtex_scraping(conn) -> int:
     if not search_configs:
         return 0
 
-    # FIX: antes apuntaba a app.main, que ya no tiene esta funcion desde el refactor.
     from app.services.scraping_orchestrator import save_scraper_results
 
     total_saved = 0
     for term in search_configs:
-        for retailer in ["exito", "carulla", "larebaja"]:
+        for retailer in ["exito", "carulla", "larebaja", "locatel"]:
             scraper = VTEXScraper(retailer=retailer)
             try:
                 results = await scraper.search_keyword(term, limit=50)
