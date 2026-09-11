@@ -24,7 +24,6 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
-CAFAM_USE_SCRAPERAPI = os.getenv("CAFAM_USE_SCRAPERAPI", "false").lower() == "true"
 
 
 class ExtractedProductData(BaseModel):
@@ -51,7 +50,7 @@ class CafamScraper:
         }
 
     def _build_request(self, params: dict):
-        if CAFAM_USE_SCRAPERAPI and SCRAPERAPI_KEY:
+        if SCRAPERAPI_KEY:
             target_url = f"{self.base_url}?{urllib.parse.urlencode(params)}"
             return "http://api.scraperapi.com/", {"api_key": SCRAPERAPI_KEY, "url": target_url}
         return self.base_url, params
@@ -64,10 +63,13 @@ class CafamScraper:
             "resultsPerPage": limit,
         }
         request_url, request_params = self._build_request(params)
+        # Al pasar por ScraperAPI no se envian nuestros headers propios
+        # (esos son para el sitio destino, no para el proxy).
+        request_headers = None if SCRAPERAPI_KEY else self.headers
 
         try:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=False) as client:
-                response = await client.get(request_url, headers=self.headers, params=request_params)
+                response = await client.get(request_url, headers=request_headers, params=request_params)
                 print(f"[DIAG CAFAM] Status recibido: {response.status_code}", flush=True)
 
                 if response.status_code != 200:
