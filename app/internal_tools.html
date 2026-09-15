@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Herramientas Internas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans min-h-screen flex items-center justify-center p-6">
+    <div class="w-full max-w-md p-6 bg-slate-800/60 border border-slate-700/50 rounded-xl space-y-4">
+        <div>
+            <h1 class="text-lg font-bold text-white">Herramientas Internas</h1>
+            <p class="text-xs text-slate-400 mt-1">Solo para uso interno -- no es una pantalla de cliente.</p>
+        </div>
+
+        <div class="space-y-2">
+            <label class="block text-[10px] text-slate-400 uppercase font-bold">Clave de administrador</label>
+            <input type="password" id="adminKey" placeholder="INTERNAL_ADMIN_KEY"
+                   class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500">
+        </div>
+
+        <button onclick="cleanDatabase()"
+                class="w-full px-4 py-2 bg-rose-600/20 text-rose-400 border border-rose-500/30 rounded-lg hover:bg-rose-600 hover:text-white text-xs font-semibold transition">
+            Limpiar Base de Datos (borra scraper_results)
+        </button>
+
+        <p id="resultMsg" class="text-xs text-slate-400"></p>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        async function cleanDatabase() {
+            const key = document.getElementById('adminKey').value.trim();
+            const resultMsg = document.getElementById('resultMsg');
+
+            if (!key) {
+                resultMsg.innerText = 'Ingresa la clave de administrador primero.';
+                resultMsg.className = 'text-xs text-amber-400';
+                return;
+            }
+            if (!confirm('¿Seguro que deseas eliminar TODOS los registros recolectados? Esto dejará las estadísticas en ceros.')) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/internal/clean-db?confirm=true&key=${encodeURIComponent(key)}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok) {
+                    resultMsg.innerText = data.detail || 'Error al limpiar la base de datos.';
+                    resultMsg.className = 'text-xs text-rose-400';
+                    return;
+                }
+                resultMsg.innerText = data.message;
+                resultMsg.className = 'text-xs text-emerald-400';
+            } catch (err) {
+                resultMsg.innerText = 'Error de red al limpiar la base de datos.';
+                resultMsg.className = 'text-xs text-rose-400';
+            }
+        }
+    </script>
+</body>
+</html>

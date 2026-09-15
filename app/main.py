@@ -11,7 +11,7 @@ from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from app.database import get_db_connection
-from app.routers import retailers, configs, results, analytics, scraping
+from app.routers import retailers, configs, results, analytics, scraping, internal
 app = FastAPI()
 origins = [
     "https://auditor-multibanner.vercel.app",
@@ -32,6 +32,7 @@ app.include_router(configs.router)
 app.include_router(results.router)
 app.include_router(analytics.router)
 app.include_router(scraping.router)
+app.include_router(internal.router)
 
 @app.get("/")
 def read_root():
@@ -60,6 +61,15 @@ def get_dashboard_page():
     if os.path.exists("dashboard.html"):
         return FileResponse("dashboard.html")
     raise HTTPException(status_code=404, detail="dashboard.html no encontrado.")
+
+@app.get("/internal/tools")
+def get_internal_tools_page():
+    # Página interna, sin link desde dashboard.html -- protegida por
+    # INTERNAL_ADMIN_KEY en el endpoint que realmente borra datos
+    # (ver app/routers/internal.py), no por ocultar esta URL.
+    if os.path.exists("app/internal_tools.html"):
+        return FileResponse("app/internal_tools.html")
+    raise HTTPException(status_code=404, detail="internal_tools.html no encontrado.")
 
 
 # --- ENDPOINT TEMPORAL DE PRUEBA: solo para validar Cruz Verde antes de ---

@@ -158,6 +158,16 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
   el alto % de discount_price=null resultó ser exactamente eso (sin bug).
 - Nunca dejar endpoints de administración/diagnóstico temporales
   (`/admin/...`, `/exec-sql`) en el código una vez cumplieron su propósito.
+  Hay uno pendiente de retirar ahora mismo: `/admin/test-cruzverde` en
+  `main.py` (detectado 2026-09-14, todavía no limpiado).
+- **`/internal/...` es distinto de `/admin/...`**: `/internal/clean-db`
+  (en `app/routers/internal.py`, con página en `/internal/tools`) es una
+  herramienta interna PERMANENTE y deliberada, protegida por
+  `INTERNAL_ADMIN_KEY` (sin esa variable configurada, el endpoint rechaza
+  todo). Se creó a propósito bajo un prefijo distinto a `/admin/` para no
+  confundirla con la regla de arriba -- no es un olvido de desarrollo, no
+  hay que "limpiarla" después. Nunca se enlaza desde dashboard.html (esa
+  pantalla es client-facing).
 
 ## Retailers -- estado actual
 
