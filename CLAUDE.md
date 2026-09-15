@@ -152,7 +152,21 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
 ## Retailers -- estado actual
 
 **Producción (main), confirmados y funcionando:**
-Éxito, Carulla, Farmatodo, La Rebaja, Locatel, Colsubsidio, Pasteur, Cafam.
+Éxito, Carulla, Farmatodo, La Rebaja, Locatel, Colsubsidio, Pasteur, Cafam*.
+
+*Cafam: posición, precio, marca y disponibilidad funcionan bien, pero
+**NO expone descuentos reales vía su endpoint de búsqueda** (limitación
+conocida, igual en espíritu a la de Rappi abajo). Confirmado con evidencia
+real (2026-09-14): "has_discount" y los precios de la búsqueda AJAX vienen
+iguales incluso cuando el producto sí tiene una oferta activa en el sitio
+(ej. "Entero Balance": la home real muestra 99.900 -> 69.930, la búsqueda
+dice que no hay descuento). El único dato confiable está en la página de
+detalle de CADA producto individual -- corregirlo implicaría una petición
+HTTP extra por producto, costosa porque Cafam ya está enrutado vía
+ScraperAPI por el bloqueo de Cloudflare confirmado. Se decidió no
+implementarlo por el costo; discount_price queda en None para Cafam a
+propósito, no es un bug silencioso. Detalle completo en
+cafam_scraper.py y en "Lecciones aprendidas" más abajo.
 
 **Pausados (investigados, pero bloqueados o de complejidad/costo alto):**
 - Rappi: multi-banner (Turbo, Pasteur, Farmaya...), requiere login para
