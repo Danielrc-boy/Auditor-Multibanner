@@ -131,6 +131,17 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
 - **Headers al usar ScraperAPI**: nunca enviar los headers propios (User-Agent,
   Origin, Referer destinados al sitio real) directamente al endpoint de
   ScraperAPI -- esos headers son para el sitio destino, no para el proxy.
+- **Retailers que dependen de ScraperAPI (sensibles a que se agote la cuota)**:
+  Éxito, Carulla (bloqueo 403 confirmado sin proxy) y Cafam (bloqueo
+  Cloudflare confirmado) enrutan TODAS sus peticiones vía ScraperAPI. Si la
+  cuota mensual del plan se agota, estos 3 retailers dejan de traer
+  resultados en las corridas programadas (confirmado 2026-09-15: "You have
+  exhausted the API Credits available in this monthly cycle") mientras el
+  resto de retailers (VTEX directos, Farmatodo, Rappi) sigue funcionando
+  con normalidad -- no es un bug del código, es esperado hasta que el ciclo
+  renueve o se cambie de plan/API key. Si alguno de estos 3 retailers deja
+  de traer datos de golpe, revisar la cuota de ScraperAPI antes de asumir
+  que el sitio cambió o que el scraper se rompió.
 - **Sesiones por cookies (ej. Salesforce Commerce Cloud / Cruz Verde)**: si
   un sitio requiere sesión, puede que ni una visita directa a la home
   entregue cookies útiles a un servidor (vs. un navegador real) -- en ese
