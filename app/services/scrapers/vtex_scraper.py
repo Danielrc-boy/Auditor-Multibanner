@@ -57,6 +57,12 @@ RETAILER_CONFIGS = {
         "use_io_prefix": False,    # confirmado: SIN /io/ delante
         "use_scraperapi": False,   # sin bloqueo confirmado hasta ahora
     },
+    "coopidrogas": {
+        "base_url": "https://www.farmaexpress.com",  # dominio real de Coopidrogas (VTEX)
+        "search_style": "path",    # confirmado: /api/catalog_system/pub/products/search/{keyword}
+        "use_io_prefix": False,    # confirmado con petición real: SIN /io/ -> 206; CON /io/ -> 404
+        "use_scraperapi": False,   # sin bloqueo confirmado hasta ahora
+    },
 }
 
 DEFAULT_CONFIG = RETAILER_CONFIGS["exito"]
@@ -186,7 +192,7 @@ async def run_vtex_scraping(conn) -> int:
 
     total_saved = 0
     for term in search_configs:
-        for retailer in ["exito", "carulla", "larebaja", "locatel", "colsubsidio", "pasteur"]:
+        for retailer in ["exito", "carulla", "larebaja", "locatel", "colsubsidio", "pasteur", "coopidrogas"]:
             scraper = VTEXScraper(retailer=retailer)
             try:
                 results = await scraper.search_keyword(term, limit=50)
