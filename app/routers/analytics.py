@@ -1,7 +1,8 @@
 """
 Rutas de analítica: opciones de filtro, ranking de posiciones,
-comparador head-to-head de referencias, y el resumen consolidado
-que alimenta el dashboard visual (/dashboard-data).
+comparador head-to-head de referencias, el resumen consolidado que
+alimenta el dashboard visual (/dashboard-data), y el resumen ejecutivo
+de KPIs (/executive-summary).
 
 Este router se conecta a la app principal en main.py con:
     app.include_router(analytics.router)
@@ -12,6 +13,14 @@ from fastapi import APIRouter, Query
 from app.database import get_db_connection
 
 router = APIRouter(tags=["analytics"])
+
+# Marcas que cuentan como "cliente" para las métricas ejecutivas
+# (Share of Shelf, Índice de Precio, Disponibilidad). El sistema es
+# multi-cliente por diseño: para monitorear otro cliente en el futuro,
+# el único cambio necesario es esta lista -- no hay nombres de marca
+# hardcodeados en ninguna otra parte de /executive-summary.
+# En minúsculas porque se compara contra LOWER(brand) en SQL.
+CLIENT_BRANDS = ["nosotras", "pequeñin", "pequeñín", "tena", "zewa"]
 
 
 @router.get("/analytics/options")
@@ -245,6 +254,184 @@ def get_dashboard_data(
                     "avg_price": float(b["avg_price"]) if b["avg_price"] else 0
                 } for b in brand_rows
             ]
+        }
+    finally:
+        conn.close()
+
+
+def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
+    """
+    Calcula Share of Shelf, Índice de Precio y Disponibilidad del cliente
+    sobre el ÚLTIMO snapshot de cada SKU dentro del filtro dado.
+
+    "SKU" se define aquí como la tupla (retailer, search_term, product_name)
+    -- el mismo criterio de deduplicación que ya usa /export para la hoja
+    "Resumen" (DISTINCT ON ... ORDER BY id DESC). Esto evita que un mismo
+    producto capturado varias veces por corridas programadas dentro del
+    período se cuente más de una vez.
+
+    El "precio efectivo" es discount_price si existe, si no price -- el
+    precio que realmente paga el cliente final, igual que en /export y
+    /analytics/compare-products (avg_final_price).
+    """
+    sql = f"""
+        WITH latest_snapshot AS (
+            SELECT DISTINCT ON (retailer, search_term, product_name)
+                LOWER(COALESCE(brand, 'sin marca')) AS brand_lower,
+                COALESCE(discount_price, price) AS effective_price,
+                is_available
+            FROM scraper_results
+            {where_sql}
+            ORDER BY retailer, search_term, product_name, id DESC
+        )
+        SELECT
+            COUNT(*) AS total_skus,
+            COUNT(*) FILTER (WHERE brand_lower = ANY(%s)) AS client_skus,
+            COUNT(*) FILTER (WHERE brand_lower = ANY(%s) AND is_available) AS client_available_skus,
+            AVG(effective_price) FILTER (
+                WHERE brand_lower = ANY(%s) AND effective_price > 0
+            ) AS client_avg_price,
+            AVG(effective_price) FILTER (
+                WHERE NOT (brand_lower = ANY(%s)) AND effective_price > 0
+            ) AS competition_avg_price
+        FROM latest_snapshot;
+    """
+    cur.execute(sql, tuple(params) + (CLIENT_BRANDS, CLIENT_BRANDS, CLIENT_BRANDS, CLIENT_BRANDS))
+    row = cur.fetchone() or {}
+
+    total = row.get("total_skus") or 0
+    client_total = row.get("client_skus") or 0
+    client_available = row.get("client_available_skus") or 0
+    client_price = float(row["client_avg_price"]) if row.get("client_avg_price") is not None else None
+    competition_price = float(row["competition_avg_price"]) if row.get("competition_avg_price") is not None else None
+
+    # Share of Shelf: None (no 0) si no hay ningún SKU monitoreado en el
+    # período -- evita reportar "0% de presencia" cuando en realidad es
+    # "sin datos".
+    share_of_shelf_pct = round((client_total / total) * 100, 1) if total > 0 else None
+
+    # Disponibilidad: None si el cliente no tiene ningún SKU en el período
+    # (no aplica dividir 0/0).
+    availability_pct = round((client_available / client_total) * 100, 1) if client_total > 0 else None
+
+    # Índice de precio: requiere precio promedio válido de AMBOS lados.
+    # Si falta precio de competencia (o de cliente), None explícito en vez
+    # de 0 o de una división por cero -- el frontend debe mostrar
+    # "Datos insuficientes", nunca un 0% o un error.
+    if client_price is not None and competition_price is not None and competition_price > 0:
+        price_index = round((client_price / competition_price) * 100, 1)
+    else:
+        price_index = None
+
+    return {
+        "share_of_shelf_pct": share_of_shelf_pct,
+        "price_index": price_index,
+        "availability_pct": availability_pct,
+        "raw": {
+            "total_skus": total,
+            "client_skus": client_total,
+            "client_available_skus": client_available,
+            "client_avg_price": client_price,
+            "competition_avg_price": competition_price,
+        },
+    }
+
+
+def _trend_between(current: dict, previous: dict) -> dict:
+    """
+    Para cada una de las 3 métricas, compara el valor actual (últimos 7
+    días) contra el anterior (los 7 días antes de esos). La diferencia
+    (actual - anterior) se reporta en puntos porcentuales, con la
+    dirección de la flecha que debe mostrar el frontend.
+    """
+    trend = {}
+    for key in ("share_of_shelf_pct", "price_index", "availability_pct"):
+        current_value = current.get(key)
+        previous_value = previous.get(key)
+        if current_value is None or previous_value is None:
+            trend[key] = {"change_pp": None, "direction": "flat", "previous_value": previous_value}
+            continue
+        change_pp = round(current_value - previous_value, 1)
+        direction = "up" if change_pp > 0 else ("down" if change_pp < 0 else "flat")
+        trend[key] = {"change_pp": change_pp, "direction": direction, "previous_value": previous_value}
+    return trend
+
+
+@router.get("/executive-summary")
+@router.get("/executive-summary/")
+def get_executive_summary(
+    retailer: Optional[str] = Query(None),
+    search_term: Optional[str] = Query(None),
+    date_from: Optional[datetime] = Query(None),
+    date_to: Optional[datetime] = Query(None),
+):
+    """
+    Resumen Ejecutivo (Fase A del dashboard): Share of Shelf, Índice de
+    Precio y Disponibilidad del cliente, más su tendencia semana a semana.
+
+    Decisión de arquitectura: se agrega como endpoint nuevo dentro de este
+    mismo router (en vez de extender /dashboard-data o crear un router
+    aparte) porque comparte conexión, convenciones de filtro (retailer/
+    search_term/date_from/date_to) y audiencia (la parte superior del
+    mismo dashboard) con /dashboard-data -- pero tiene una forma de
+    respuesta distinta (KPIs con tendencia, no series para gráficas), así
+    que mezclarlo en la misma función habría complicado ambas cosas.
+
+    - retailer/search_term/date_from/date_to: filtran las 3 métricas del
+      "período seleccionado" (si no se pasan, es histórico completo).
+    - La tendencia (últimos 7 días vs. los 7 días anteriores) SIEMPRE usa
+      esa ventana fija de 14 días, sin importar date_from/date_to -- solo
+      hereda el filtro de retailer/search_term para mantener consistencia
+      con lo que el usuario esté viendo.
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            common_where = " WHERE 1=1"
+            common_params = []
+            if retailer and retailer != "ALL":
+                common_where += " AND retailer ILIKE %s"
+                common_params.append(f"%{retailer}%")
+            if search_term and search_term != "ALL":
+                common_where += " AND search_term ILIKE %s"
+                common_params.append(f"%{search_term}%")
+
+            period_where = common_where
+            period_params = list(common_params)
+            if date_from:
+                period_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date >= %s::date"
+                period_params.append(date_from)
+            if date_to:
+                period_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
+                period_params.append(date_to)
+            period_metrics = _fetch_summary_metrics(cur, period_where, period_params)
+
+            current_where = common_where + """
+                AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date
+                    >= ((NOW() AT TIME ZONE 'America/Bogota')::date - INTERVAL '6 days')
+            """
+            current_metrics = _fetch_summary_metrics(cur, current_where, list(common_params))
+
+            previous_where = common_where + """
+                AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date
+                    >= ((NOW() AT TIME ZONE 'America/Bogota')::date - INTERVAL '13 days')
+                AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date
+                    < ((NOW() AT TIME ZONE 'America/Bogota')::date - INTERVAL '6 days')
+            """
+            previous_metrics = _fetch_summary_metrics(cur, previous_where, list(common_params))
+
+        return {
+            "period": {
+                "share_of_shelf_pct": period_metrics["share_of_shelf_pct"],
+                "price_index": period_metrics["price_index"],
+                "availability_pct": period_metrics["availability_pct"],
+            },
+            "trend": _trend_between(current_metrics, previous_metrics),
+            "detail": {
+                "period": period_metrics["raw"],
+                "current_7d": current_metrics["raw"],
+                "previous_7d": previous_metrics["raw"],
+            },
         }
     finally:
         conn.close()
