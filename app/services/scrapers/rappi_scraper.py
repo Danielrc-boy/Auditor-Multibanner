@@ -173,7 +173,17 @@ class RappiScraper:
                         continue
 
                     offer = item.get("offers", {}) or {}
-                    price = float(offer.get("price", 0.0) or 0.0)
+                    # Confirmado con evidencia real (búsqueda "nosotras" en
+                    # producción): cuando el mismo producto tiene precios
+                    # distintos entre varias tiendas/darkstores de Rappi, el
+                    # offer viene como "AggregateOffer" (lowPrice/highPrice,
+                    # SIN campo "price") en vez de "Offer" (price directo).
+                    # Sin este fallback, esos productos se guardaban con
+                    # price=0.0 silenciosamente.
+                    if offer.get("@type") == "AggregateOffer":
+                        price = float(offer.get("lowPrice", 0.0) or offer.get("highPrice", 0.0) or 0.0)
+                    else:
+                        price = float(offer.get("price", 0.0) or 0.0)
                     availability = offer.get("availability", "")
                     in_stock = True
                     if availability and "outofstock" in availability.lower():
