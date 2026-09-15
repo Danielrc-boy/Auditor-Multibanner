@@ -103,6 +103,23 @@ class FarmatodoScraper:
             base_price = self._safe_float(item.get("fullPrice") or item.get("price") or item.get("originalPrice") or item.get("regularPrice")) or 0.0
             offer_price = self._safe_float(item.get("offerPrice") or item.get("priceWithDiscount") or item.get("discountPrice") or item.get("finalPrice") or item.get("specialPrice"))
 
+        # Confirmado con evidencia real (Algolia, búsqueda "toallas higienicas"):
+        # el campo "offerPrice" de nivel superior SIEMPRE viene en 0, aunque el
+        # producto sí tenga una oferta activa -- el precio real vive anidado
+        # dentro de "offerPriceByStore" (o "offerPriceByCity"), una lista de
+        # grupos de tiendas con su propio offerPrice. Sin este fallback, la
+        # oferta se perdía silenciosamente para TODOS los productos con
+        # descuento (ej. Tena Discreet Súper: fullPrice=60250, oferta real
+        # 48200 en offerPriceByStore, pero offerPrice=0 en el nivel superior).
+        if not offer_price:
+            for by_group_key in ("offerPriceByStore", "offerPriceByCity"):
+                groups = item.get(by_group_key)
+                if isinstance(groups, list) and groups:
+                    candidate = self._safe_float(groups[0].get("offerPrice"))
+                    if candidate:
+                        offer_price = candidate
+                        break
+
         if not offer_price:
             promos = item.get("promotions") or item.get("discounts") or item.get("offers")
             if isinstance(promos, list) and len(promos) > 0:
