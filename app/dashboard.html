@@ -88,12 +88,12 @@
         <!-- KPI CARDS -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
-                <span class="text-slate-400 text-xs font-medium">SKUs Monitoreados</span>
+                <span class="text-slate-400 text-xs font-medium">Capturas Totales (Hist&oacute;rico)</span>
                 <p id="kpiTotal" class="text-2xl font-extrabold text-indigo-400 mt-2">0</p>
             </div>
             <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
-                <span class="text-slate-400 text-xs font-medium">Disponibilidad (In Stock)</span>
-                <p id="kpiAvailability" class="text-2xl font-extrabold text-emerald-400 mt-2">0%</p>
+                <span class="text-slate-400 text-xs font-medium">Retailers Activos</span>
+                <p id="kpiActiveRetailers" class="text-2xl font-extrabold text-sky-400 mt-2">0</p>
             </div>
             <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
                 <span class="text-slate-400 text-xs font-medium">Alertas de Agotados</span>
@@ -212,7 +212,7 @@
 
                 // Actualizar KPIs
                 document.getElementById('kpiTotal').innerText = data.summary.total_monitored.toLocaleString();
-                document.getElementById('kpiAvailability').innerText = `${data.summary.availability_rate}%`;
+                document.getElementById('kpiActiveRetailers').innerText = data.summary.active_retailers;
                 document.getElementById('kpiOOS').innerText = data.summary.out_of_stock_alerts;
                 document.getElementById('kpiDiscount').innerText = `${data.summary.avg_discount_pct}%`;
                 
