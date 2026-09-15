@@ -21,6 +21,16 @@ los datos vía una API (FastAPI) que alimenta un dashboard.
 `main` = producción real, lo que ve el cliente (Essity) ahora mismo.
 `staging` = ambiente de pruebas, con su propia base de datos separada.
 
+**Importante (confirmado 2026-09-14):** la base de datos de staging tiene
+una mezcla de productos NO representativa del negocio real -- está
+contaminada con datos de pruebas, corridas manuales repetidas, y
+retailers agregados en distintos momentos durante el desarrollo (ej. su
+`price_index` puede salir muy distinto al de producción sin que eso sea
+un bug -- son catálogos de retailers completamente distintos). Staging
+sirve para confirmar que el código FUNCIONA técnicamente (no truena, la
+lógica corre, los campos se llenan) -- nunca para validar si un número de
+negocio "tiene sentido". Esa validación siempre se hace contra producción.
+
 Flujo obligatorio para CUALQUIER cambio:
 1. Trabajar sobre la rama `staging`.
 2. Hacer commit y push a `staging`.
