@@ -35,6 +35,40 @@
 
     <div class="pt-24 pb-12 max-w-7xl mx-auto px-6 space-y-8">
 
+        <!-- RESUMEN EJECUTIVO -->
+        <div>
+            <h2 class="text-base font-bold text-white flex items-center gap-2 mb-3">
+                <i class="fa-solid fa-chart-pie text-indigo-400"></i> Resumen Ejecutivo
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+                    <span class="text-slate-400 text-xs font-medium">Share of Shelf (Cliente)</span>
+                    <p id="execShareOfShelf" class="text-3xl font-extrabold text-indigo-400 mt-2">--%</p>
+                    <p id="execShareOfShelfNote" class="text-[10px] text-slate-500 mt-1">Cargando...</p>
+                </div>
+                <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+                    <span class="text-slate-400 text-xs font-medium">Índice de Precio (Base 100)</span>
+                    <p id="execPriceIndex" class="text-3xl font-extrabold text-amber-400 mt-2">--</p>
+                    <p id="execPriceIndexNote" class="text-[10px] text-slate-500 mt-1">Cargando...</p>
+                </div>
+                <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+                    <span class="text-slate-400 text-xs font-medium inline-flex items-center gap-1">
+                        Disponibilidad (Cliente)
+                        <i id="execAvailabilityQualityIcon" class="fa-solid fa-circle-info text-amber-400/70 text-[10px] hidden"
+                           title="Dato parcial: algunos retailers no verifican disponibilidad real, o descartan el producto agotado antes de guardarlo -- el % puede no reflejar agotados reales."></i>
+                    </span>
+                    <p id="execAvailability" class="text-3xl font-extrabold text-emerald-400 mt-2">--%</p>
+                    <p id="execAvailabilityNote" class="text-[10px] text-slate-500 mt-1">Cargando...</p>
+                </div>
+                <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+                    <span class="text-slate-400 text-xs font-medium">Tendencia (7d vs. 7d anterior)</span>
+                    <div id="execTrendBody" class="mt-2 space-y-1">
+                        <p class="text-slate-500 text-xs">Cargando...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- FILTROS GLOBALES -->
         <div class="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl flex flex-wrap gap-4 items-center justify-between">
             <div class="flex flex-wrap gap-3 items-center w-full md:w-auto">
@@ -188,8 +222,91 @@
                 document.getElementById('lastUpdated').innerText = `Actualizado: ${new Date().toLocaleTimeString()}`;
 
                 loadPositionsTable();
+                loadExecutiveSummary();
             } catch (err) {
                 console.error("Error cargando dashboard data:", err);
+            }
+        }
+
+        async function loadExecutiveSummary() {
+            const retailer = document.getElementById('filterRetailer').value;
+            const term = document.getElementById('filterTerm').value;
+
+            try {
+                const res = await fetch(`${API_BASE}/executive-summary?retailer=${retailer}&search_term=${term}`);
+                const data = await res.json();
+                renderExecutiveSummary(data);
+            } catch (err) {
+                console.error("Error cargando resumen ejecutivo:", err);
+            }
+        }
+
+        function renderExecutiveSummary(data) {
+            const period = data.period || {};
+
+            // --- Share of Shelf ---
+            const sos = period.share_of_shelf_pct;
+            document.getElementById('execShareOfShelf').innerText = (sos === null || sos === undefined) ? '—' : `${sos}%`;
+            const sosDetail = (data.detail || {}).period || {};
+            document.getElementById('execShareOfShelfNote').innerText = (sos === null || sos === undefined)
+                ? 'Sin datos suficientes en el período'
+                : `${sosDetail.client_skus ?? 0} de ${sosDetail.total_skus ?? 0} SKUs monitoreados`;
+
+            // --- Índice de Precio (con indicación clara de más caro/barato) ---
+            const priceIndex = period.price_index;
+            const priceIndexEl = document.getElementById('execPriceIndex');
+            const priceIndexNoteEl = document.getElementById('execPriceIndexNote');
+            if (priceIndex === null || priceIndex === undefined) {
+                priceIndexEl.innerText = '—';
+                priceIndexNoteEl.innerText = 'Datos insuficientes (falta precio de cliente o de competencia)';
+            } else {
+                priceIndexEl.innerText = priceIndex.toFixed(1);
+                const gapPct = Math.round(Math.abs(priceIndex - 100) * 10) / 10;
+                if (priceIndex > 100) {
+                    priceIndexNoteEl.innerHTML = `<span class="text-amber-400 font-semibold">▲ ${gapPct}% más caro</span> que el mercado`;
+                } else if (priceIndex < 100) {
+                    priceIndexNoteEl.innerHTML = `<span class="text-emerald-400 font-semibold">▼ ${gapPct}% más barato</span> que el mercado`;
+                } else {
+                    priceIndexNoteEl.innerText = 'Al mismo nivel que el mercado';
+                }
+            }
+
+            // --- Disponibilidad (con aviso discreto si el dato es parcial) ---
+            const availability = period.availability_pct;
+            document.getElementById('execAvailability').innerText = (availability === null || availability === undefined) ? '—' : `${availability}%`;
+            const qualityIcon = document.getElementById('execAvailabilityQualityIcon');
+            const availabilityNote = document.getElementById('execAvailabilityNote');
+            if (period.availability_data_quality === 'partial') {
+                qualityIcon.classList.remove('hidden');
+                availabilityNote.innerHTML = '<span class="text-amber-400/80">● dato parcial</span> — algunos retailers no verifican agotados';
+            } else {
+                qualityIcon.classList.add('hidden');
+                availabilityNote.innerText = (availability === null || availability === undefined) ? 'Sin datos suficientes en el período' : '';
+            }
+
+            // --- Tendencia (o el motivo por el que no se muestra) ---
+            const trendBody = document.getElementById('execTrendBody');
+            if (data.coverage_changed) {
+                trendBody.innerHTML = `
+                    <p class="text-indigo-300 text-sm font-semibold">📊 Cobertura ampliada esta semana</p>
+                    <p class="text-[10px] text-slate-500 mt-1">Se agregaron retailers nuevos -- comparar semana a semana todavía no sería representativo.</p>
+                `;
+            } else if (!data.trend) {
+                trendBody.innerHTML = `<p class="text-slate-500 text-xs">Sin datos suficientes para comparar</p>`;
+            } else {
+                const metricLabels = {
+                    share_of_shelf_pct: 'Share of Shelf',
+                    price_index: 'Índice de Precio',
+                    availability_pct: 'Disponibilidad',
+                };
+                trendBody.innerHTML = Object.keys(metricLabels).map(key => {
+                    const t = data.trend[key];
+                    if (!t || t.change_pp === null || t.change_pp === undefined) {
+                        return `<p class="text-xs text-slate-500 flex justify-between gap-2"><span>${metricLabels[key]}</span><span>—</span></p>`;
+                    }
+                    const arrow = t.direction === 'up' ? '▲' : (t.direction === 'down' ? '▼' : '—');
+                    return `<p class="text-xs text-slate-300 flex justify-between gap-2"><span>${metricLabels[key]}</span><span class="text-indigo-300 font-semibold">${arrow} ${Math.abs(t.change_pp)}pp</span></p>`;
+                }).join('');
             }
         }
 
