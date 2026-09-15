@@ -130,6 +130,22 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
 - **discount_price puede no estar disponible** en ciertas plataformas (ej.
   Rappi vía datos estructurados JSON-LD) -- documentarlo explícitamente en
   el scraper en vez de inventar un valor.
+- **No asumir que discount_price=null significa "sin descuento real"**:
+  confirmado (2026-09-14) que Farmatodo tenía un bug real (el campo
+  "offerPrice" de nivel superior de Algolia siempre viene en 0; el precio
+  de oferta real vive anidado en "offerPriceByStore"/"offerPriceByCity")
+  -- ya corregido. Cafam tiene el mismo síntoma pero por una causa
+  distinta y NO corregida a propósito: su endpoint de búsqueda AJAX no
+  refleja los descuentos reales (verificado comparando contra la home del
+  sitio), y la única fuente confiable es la página de detalle de cada
+  producto individual -- una petición HTTP extra POR PRODUCTO, cara
+  porque Cafam ya pasa por ScraperAPI (bloqueo Cloudflare). Se decidió no
+  implementarlo por el costo; discount_price queda en None para Cafam,
+  documentado también en cafam_scraper.py. Antes de "arreglar" un
+  discount_price=null en cualquier retailer, verificar primero con el
+  sitio real si el producto genuinamente no tiene oferta activa -- en
+  Éxito, Carulla, La Rebaja, Locatel, Colsubsidio, Pasteur y Coopidrogas
+  el alto % de discount_price=null resultó ser exactamente eso (sin bug).
 - Nunca dejar endpoints de administración/diagnóstico temporales
   (`/admin/...`, `/exec-sql`) en el código una vez cumplieron su propósito.
 

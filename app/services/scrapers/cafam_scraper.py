@@ -16,6 +16,21 @@ disponibilidad (a diferencia del HTML de la misma página, que sí marca
 la clase "out-of-stock" en cada producto). Por ahora in_stock siempre
 se reporta como True -- si más adelante se necesita disponibilidad real,
 habría que complementar con el HTML (rendered_products) en vez del JSON.
+
+Limitación conocida (discount_price): confirmado con evidencia real
+(2026-09-14) que "has_discount" y "price_amount"/"regular_price_amount"
+de este endpoint de búsqueda NO reflejan descuentos reales activos --
+ej. "Entero Balance" mostraba has_discount=False y ambos precios iguales
+($99.900) en la búsqueda, mientras que la home real del sitio mostraba
+$99.900 -> $69.930 (30% off) para el mismo producto. El precio real solo
+está disponible en la página de detalle de CADA producto individual
+(microdata itemprop="price"), lo que implicaría una petición HTTP extra
+POR PRODUCTO -- costoso porque Cafam ya está enrutado vía ScraperAPI por
+el bloqueo de Cloudflare confirmado. Decisión (2026-09-14): no
+implementar por ahora por el costo; discount_price se deja en None para
+Cafam de forma consistente, igual que la limitación ya documentada de
+Rappi. Revisar esta decisión si el costo de ScraperAPI deja de ser un
+problema o si el descuento se vuelve crítico para el negocio.
 """
 import os
 import urllib.parse
