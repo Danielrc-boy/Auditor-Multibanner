@@ -14,6 +14,24 @@ from app.database import get_db_connection
 
 router = APIRouter(tags=["analytics"])
 
+# Retailers cuyo is_available refleja una verificación real de stock que
+# SÍ se guarda en la tabla (disponibles Y agotados por igual). Confirmado
+# con datos reales de producción (2026-09-14):
+#   - Farmatodo: 36 de 651 filas con is_available=False -- señal real y
+#     completa, es el ÚNICO retailer así.
+#   - Éxito/Carulla/La Rebaja/Locatel/Colsubsidio/Pasteur/Coopidrogas
+#     (VTEX): SÍ verifican AvailableQuantity real, pero vtex_scraper.py
+#     DESCARTA el producto agotado antes de guardarlo (nunca se inserta) --
+#     el efecto neto en la tabla es el mismo que no verificar: 0 de miles
+#     de filas con is_available=False en cada uno.
+#   - Cafam: in_stock queda hardcodeado en True siempre (documentado en
+#     cafam_scraper.py -- el JSON de búsqueda no expone stock).
+#   - Rappi: solo marca OOS cuando el JSON-LD lo indica explícitamente,
+#     algo que casi nunca ocurre en la práctica -- señal parcial.
+# Por eso un 100% de disponibilidad en cualquiera de estos NO distingue
+# "todo en stock" de "no medimos lo agotado".
+RETAILERS_WITH_RELIABLE_AVAILABILITY = {"farmatodo"}
+
 # Marcas que cuentan como "cliente" para las métricas ejecutivas
 # (Share of Shelf, Índice de Precio, Disponibilidad). El sistema es
 # multi-cliente por diseño: para monitorear otro cliente en el futuro,
@@ -337,6 +355,25 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
     }
 
 
+def _distinct_retailers(cur, where_sql: str, params: list) -> set:
+    """Retailers (en minúsculas) presentes en scraper_results bajo el filtro dado."""
+    cur.execute(f"SELECT DISTINCT LOWER(retailer) AS r FROM scraper_results {where_sql};", tuple(params))
+    return {row["r"] for row in cur.fetchall()}
+
+
+def _availability_data_quality(retailers_present: set) -> str:
+    """
+    "complete" solo si TODOS los retailers presentes en el filtro verifican
+    y guardan disponibilidad real (ver RETAILERS_WITH_RELIABLE_AVAILABILITY
+    arriba). "partial" si aparece cualquier otro retailer -- para que
+    availability_pct nunca se presente como 100% confiable cuando en
+    realidad varios retailers no verifican OOS o lo filtran antes de guardar.
+    """
+    if retailers_present and retailers_present.issubset(RETAILERS_WITH_RELIABLE_AVAILABILITY):
+        return "complete"
+    return "partial"
+
+
 def _trend_between(current: dict, previous: dict) -> dict:
     """
     Para cada una de las 3 métricas, compara el valor actual (últimos 7
@@ -405,12 +442,15 @@ def get_executive_summary(
                 period_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
                 period_params.append(date_to)
             period_metrics = _fetch_summary_metrics(cur, period_where, period_params)
+            period_retailers = _distinct_retailers(cur, period_where, period_params)
+            availability_data_quality = _availability_data_quality(period_retailers)
 
             current_where = common_where + """
                 AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date
                     >= ((NOW() AT TIME ZONE 'America/Bogota')::date - INTERVAL '6 days')
             """
             current_metrics = _fetch_summary_metrics(cur, current_where, list(common_params))
+            current_retailers = _distinct_retailers(cur, current_where, list(common_params))
 
             previous_where = common_where + """
                 AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date
@@ -419,18 +459,43 @@ def get_executive_summary(
                     < ((NOW() AT TIME ZONE 'America/Bogota')::date - INTERVAL '6 days')
             """
             previous_metrics = _fetch_summary_metrics(cur, previous_where, list(common_params))
+            previous_retailers = _distinct_retailers(cur, previous_where, list(common_params))
+
+        # Si la cobertura de retailers cambió entre las dos ventanas de 7
+        # días (ej. se agregaron retailers nuevos a mitad de semana), la
+        # diferencia actual-vs-anterior mezcla movimiento real de mercado
+        # con el cambio de cobertura del sistema -- no es representativa.
+        # En ese caso se devuelve trend=None con la razón explícita, en vez
+        # de una flecha engañosa.
+        coverage_changed = current_retailers != previous_retailers
+        if coverage_changed:
+            trend_result = None
+            trend_unavailable_reason = (
+                "La cobertura de retailers cambió entre las dos ventanas de 7 días: "
+                f"hace 8-14 días eran {sorted(previous_retailers) or ['ninguno']}, "
+                f"en los últimos 7 días son {sorted(current_retailers) or ['ninguno']}. "
+                "Comparar el % no reflejaría movimiento real de mercado."
+            )
+        else:
+            trend_result = _trend_between(current_metrics, previous_metrics)
+            trend_unavailable_reason = None
 
         return {
             "period": {
                 "share_of_shelf_pct": period_metrics["share_of_shelf_pct"],
                 "price_index": period_metrics["price_index"],
                 "availability_pct": period_metrics["availability_pct"],
+                "availability_data_quality": availability_data_quality,
             },
-            "trend": _trend_between(current_metrics, previous_metrics),
+            "trend": trend_result,
+            "coverage_changed": coverage_changed,
+            "trend_unavailable_reason": trend_unavailable_reason,
             "detail": {
                 "period": period_metrics["raw"],
                 "current_7d": current_metrics["raw"],
                 "previous_7d": previous_metrics["raw"],
+                "current_7d_retailers": sorted(current_retailers),
+                "previous_7d_retailers": sorted(previous_retailers),
             },
         }
     finally:
