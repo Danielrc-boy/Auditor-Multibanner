@@ -37,6 +37,22 @@ app.include_router(scraping.router)
 def read_root():
     return {"message": "API Monitoreo Activa"}
 
+@app.get("/version")
+def get_version():
+    """
+    Confirma qué commit está corriendo realmente en este ambiente (staging
+    o producción) sin tener que adivinar si un deploy ya terminó de
+    propagarse -- Railway inyecta estas variables automáticamente en cada
+    deploy, sin configuración adicional.
+    """
+    commit_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "unknown")
+    return {
+        "commit": commit_sha[:7] if commit_sha != "unknown" else commit_sha,
+        "commit_full": commit_sha,
+        "branch": os.getenv("RAILWAY_GIT_BRANCH", "unknown"),
+        "environment": os.getenv("RAILWAY_ENVIRONMENT_NAME", "unknown"),
+    }
+
 @app.get("/dashboard")
 def get_dashboard_page():
     if os.path.exists("app/dashboard.html"):
