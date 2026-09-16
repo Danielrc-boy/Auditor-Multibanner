@@ -169,8 +169,57 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
   el alto % de discount_price=null resultó ser exactamente eso (sin bug).
 - Nunca dejar endpoints de administración/diagnóstico temporales
   (`/admin/...`, `/exec-sql`) en el código una vez cumplieron su propósito.
-  Hay uno pendiente de retirar ahora mismo: `/admin/test-cruzverde` en
-  `main.py` (detectado 2026-09-14, todavía no limpiado).
+  `/admin/test-cruzverde` en `main.py` (detectado 2026-09-14) ya se
+  retiró (2026-09-15), junto con `app/schemas.py`, `app/models.py` y
+  `app/routers/skus.py` -- código huérfano de la misma planeación
+  temprana con SQLAlchemy, nunca registrado en `main.py` y ya roto
+  (importaban `Base`/`get_db`, que no existen en el `database.py` real).
+  Pendiente relacionado, sin resolver: `app/services/scheduler.py`
+  también importa `app.models` y también está huérfano/roto de la misma
+  manera (importa `SessionLocal`, tampoco existe, y no se registra en
+  `main.py`) -- no se tocó porque no se confirmó si sigue sin usarse en
+  ningún lado antes de borrarlo.
+- **PENDIENTE (sin resolver, detectado 2026-09-15): falta filtro de
+  relevancia de categoría en el buscador VTEX genérico.** La lección de
+  "Filtro de relevancia" de arriba se documentó para Rappi (carruseles
+  genéricos), pero se confirmó que también aplica a VTEX -- no es
+  exclusivo de plataformas "sucias". El VTEX intelligent search de
+  Colsubsidio, al buscar "Toallas Higienicas", devuelve mezclados
+  productos de OTRA categoría (ej. "Life Cup Copa Menstrual Talla 0",
+  "TOALLAS HIGIENICAS REUTILIZABLES LIFEPAD") junto con toallas
+  desechables reales -- confirmado comparando precios reales: esos 2
+  productos ($65.322 y $86.550) inflaban el precio promedio de
+  competencia de ~$9.212 (comparable real) a $31.454, lo que hubiera
+  distorsionado el Índice de Precio de ~190% real a un engañoso 55.8%.
+  Este problema es INDEPENDIENTE del de "brand" (ver más abajo) -- ya
+  existía en los datos crudos del sitio, solo estaba invisible porque
+  antes de corregir "brand" el Índice de Precio de Colsubsidio nunca se
+  calculaba (siempre None). Mitigación aplicada mientras tanto (ver
+  `RETAILERS_WITH_UNRELIABLE_PRICE_INDEX` en `app/routers/analytics.py`):
+  el Índice de Precio de Colsubsidio se fuerza a None
+  (`price_index_data_quality: "partial"` en `/executive-summary`) en vez
+  de mostrar un número contaminado -- el Share of Shelf de Colsubsidio
+  SÍ es confiable y se sigue mostrando normal, porque no depende de
+  precio. Pendiente real: agregar un filtro de relevancia de categoría
+  (ej. exigir que el título contenga "toalla"/"toallas", o excluir por
+  palabras clave como "copa menstrual"/"reutilizable") en `vtex_scraper.py`
+  -- evaluar si otros retailers VTEX tienen el mismo problema antes de
+  decidir si el filtro debe ser genérico o solo para Colsubsidio.
+- **PENDIENTE (sin resolver, detectado 2026-09-15): revisar
+  `RETAILERS_WITH_UNRELIABLE_BRAND_FIELD` en `insights_engine.py`.**
+  Ese set (`{"cafam", "colsubsidio"}`) excluye a ambos retailers de
+  TODOS los insights (Alertas/Oportunidades/Fortalezas: Share of Shelf,
+  Índice de Precio, Posición Dominante) porque documentaba que "brand"
+  no era confiable en ninguno de los dos -- eso ya se corrigió (ver
+  `_detect_client_brand` en `cafam_scraper.py` y `_resolve_brand` en
+  `vtex_scraper.py`, ambos verificados con evidencia real). Ahora que
+  "brand" sí es confiable, seguir excluyendo a estos dos retailers del
+  motor de insights es más estricto de lo necesario -- pero Colsubsidio
+  todavía no puede recibir insights de Índice de Precio por el problema
+  de categoría documentado arriba. No se tocó en esta sesión porque no
+  se pidió explícitamente; evaluar separar el criterio de exclusión por
+  métrica (igual que ya se hizo en `/executive-summary` con
+  `price_index_data_quality`) en vez de excluir todo-o-nada por retailer.
 - **`/internal/...` es distinto de `/admin/...`**: `/internal/clean-db`
   (en `app/routers/internal.py`, con página en `/internal/tools`) es una
   herramienta interna PERMANENTE y deliberada, protegida por
@@ -183,7 +232,7 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
 ## Retailers -- estado actual
 
 **Producción (main), confirmados y funcionando:**
-Éxito, Carulla, Farmatodo, La Rebaja, Locatel, Colsubsidio, Pasteur, Cafam*.
+Éxito, Carulla, Farmatodo, La Rebaja, Locatel, Colsubsidio*, Pasteur, Cafam*.
 
 *Cafam: posición, precio, marca y disponibilidad funcionan bien, pero
 **NO expone descuentos reales vía su endpoint de búsqueda** (limitación
@@ -198,6 +247,30 @@ ScraperAPI por el bloqueo de Cloudflare confirmado. Se decidió no
 implementarlo por el costo; discount_price queda en None para Cafam a
 propósito, no es un bug silencioso. Detalle completo en
 cafam_scraper.py y en "Lecciones aprendidas" más abajo.
+
+**Fix de clasificación de marca (Cafam y Colsubsidio, 2026-09-15):**
+ambos exponían la razón social del fabricante/distribuidor en el campo
+de marca en vez de la marca comercial real, lo que hacía que TODOS los
+productos Nosotras/Tena se contaran como competencia (Share of Shelf
+0% en ambos, confirmado con datos reales de producción). Corregido:
+Cafam vía `_detect_client_brand()` (busca la marca cliente en el título
+del producto, ver `cafam_scraper.py`), Colsubsidio vía
+`brand_specification_field: "Marca Comercial"` en `RETAILER_CONFIGS`
+(ver `vtex_scraper.py`). Verificado con datos reales de producción:
+Cafam pasó de 0% a 75% de Share of Shelf; Colsubsidio de 0% a 70%
+(snapshot en vivo, mismo término que usa producción). Al corregir esto
+se descubrió un problema DISTINTO y sin resolver en Colsubsidio -- ver
+el Índice de Precio abajo.
+
+*Colsubsidio: Share of Shelf y clasificación de marca ya son confiables
+(ver fix arriba), pero su **Índice de Precio NO es confiable todavía**
+-- el buscador VTEX de Colsubsidio mezcla productos de otra categoría
+(copas menstruales, kits reutilizables) con toallas desechables reales,
+lo que distorsiona el precio promedio de competencia. Mitigado
+forzando `price_index` a None para este retailer
+(`RETAILERS_WITH_UNRELIABLE_PRICE_INDEX` en `analytics.py`) hasta que
+exista un filtro de relevancia de categoría. Detalle completo en
+"Lecciones aprendidas" más abajo (pendiente sin resolver).
 
 **Pausados (investigados, pero bloqueados o de complejidad/costo alto):**
 - Rappi: multi-banner (Turbo, Pasteur, Farmaya...), requiere login para

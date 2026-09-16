@@ -38,6 +38,27 @@ RETAILERS_WITH_RELIABLE_AVAILABILITY = {"farmatodo"}
 # se re-exporta aquí para no romper otros módulos que ya hacen
 # `from app.routers.analytics import CLIENT_BRANDS`.
 
+# Retailers cuyo Índice de Precio NO es confiable todavía -- distinto del
+# problema de "brand" ya corregido en Cafam/Colsubsidio (ver
+# client_brands.py y vtex_scraper.py). Aquí el problema es que la
+# búsqueda "Toallas Higienicas" del VTEX intelligent search de
+# Colsubsidio trae mezclados productos de otra categoría (copas
+# menstruales, kits de toallas reutilizables) junto con toallas
+# desechables reales -- confirmado con evidencia real (2026-09-15):
+# "Life Cup Copa Menstrual Talla 0" ($65.322) y "TOALLAS HIGIENICAS
+# REUTILIZABLES LIFEPAD" ($86.550) inflaban el precio promedio de
+# competencia de ~$9.212 (comparable real, solo Siempre Libre/Stayfree/
+# Kotex) a $31.454, lo que distorsionaba el Índice de Precio de ~190%
+# real (cliente más caro) a un engañoso 55.8% (sugería cliente más
+# barato). El problema NO lo introdujo el fix de marca -- ya existía en
+# los datos crudos del sitio; antes era invisible porque client_skus=0
+# siempre volvía price_index=None sin llegar a calcularlo. Ver tarea
+# pendiente en CLAUDE.md sobre el filtro de relevancia de categoría que
+# hace falta (podría afectar a otros retailers VTEX también). Mientras
+# tanto: mismo principio que Cafam con discount_price -- preferimos
+# None ("Datos insuficientes") a un número que sabemos contaminado.
+RETAILERS_WITH_UNRELIABLE_PRICE_INDEX = {"colsubsidio"}
+
 
 @router.get("/analytics/options")
 def get_filter_options():
@@ -372,6 +393,19 @@ def _availability_data_quality(retailers_present: set) -> str:
     return "partial"
 
 
+def _price_index_data_quality(retailers_present: set) -> str:
+    """
+    "partial" si CUALQUIERA de los retailers presentes en el filtro está
+    en RETAILERS_WITH_UNRELIABLE_PRICE_INDEX (ver nota arriba) -- en ese
+    caso el price_index de esa ventana se fuerza a None en vez de
+    mostrar un número calculado sobre un promedio de competencia
+    contaminado con productos de otra categoría.
+    """
+    if retailers_present & RETAILERS_WITH_UNRELIABLE_PRICE_INDEX:
+        return "partial"
+    return "complete"
+
+
 def _trend_between(current: dict, previous: dict) -> dict:
     """
     Para cada una de las 3 métricas, compara el valor actual (últimos 7
@@ -442,6 +476,9 @@ def get_executive_summary(
             period_metrics = _fetch_summary_metrics(cur, period_where, period_params)
             period_retailers = _distinct_retailers(cur, period_where, period_params)
             availability_data_quality = _availability_data_quality(period_retailers)
+            price_index_data_quality = _price_index_data_quality(period_retailers)
+            if price_index_data_quality == "partial":
+                period_metrics["price_index"] = None
 
             current_where = common_where + """
                 AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date
@@ -449,6 +486,8 @@ def get_executive_summary(
             """
             current_metrics = _fetch_summary_metrics(cur, current_where, list(common_params))
             current_retailers = _distinct_retailers(cur, current_where, list(common_params))
+            if _price_index_data_quality(current_retailers) == "partial":
+                current_metrics["price_index"] = None
 
             previous_where = common_where + """
                 AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date
@@ -458,6 +497,8 @@ def get_executive_summary(
             """
             previous_metrics = _fetch_summary_metrics(cur, previous_where, list(common_params))
             previous_retailers = _distinct_retailers(cur, previous_where, list(common_params))
+            if _price_index_data_quality(previous_retailers) == "partial":
+                previous_metrics["price_index"] = None
 
         # Si la cobertura de retailers cambió entre las dos ventanas de 7
         # días (ej. se agregaron retailers nuevos a mitad de semana), la
@@ -484,6 +525,7 @@ def get_executive_summary(
                 "price_index": period_metrics["price_index"],
                 "availability_pct": period_metrics["availability_pct"],
                 "availability_data_quality": availability_data_quality,
+                "price_index_data_quality": price_index_data_quality,
             },
             "trend": trend_result,
             "coverage_changed": coverage_changed,
