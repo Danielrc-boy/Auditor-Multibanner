@@ -112,24 +112,27 @@
                 <div>
                     <h3 class="text-xs font-bold text-rose-400 uppercase mb-2 flex items-center gap-1">
                         <i class="fa-solid fa-triangle-exclamation"></i> Alertas
+                        <span id="insightsAlertasCount" class="text-slate-500 normal-case font-normal"></span>
                     </h3>
-                    <div id="insightsAlertas" class="space-y-2">
+                    <div id="insightsAlertas" class="space-y-2 max-h-96 overflow-y-auto pr-1">
                         <p class="text-xs text-slate-500">Cargando...</p>
                     </div>
                 </div>
                 <div>
                     <h3 class="text-xs font-bold text-amber-400 uppercase mb-2 flex items-center gap-1">
                         <i class="fa-solid fa-arrow-trend-up"></i> Oportunidades
+                        <span id="insightsOportunidadesCount" class="text-slate-500 normal-case font-normal"></span>
                     </h3>
-                    <div id="insightsOportunidades" class="space-y-2">
+                    <div id="insightsOportunidades" class="space-y-2 max-h-96 overflow-y-auto pr-1">
                         <p class="text-xs text-slate-500">Cargando...</p>
                     </div>
                 </div>
                 <div>
                     <h3 class="text-xs font-bold text-emerald-400 uppercase mb-2 flex items-center gap-1">
                         <i class="fa-solid fa-star"></i> Fortalezas
+                        <span id="insightsFortalezasCount" class="text-slate-500 normal-case font-normal"></span>
                     </h3>
-                    <div id="insightsFortalezas" class="space-y-2">
+                    <div id="insightsFortalezas" class="space-y-2 max-h-96 overflow-y-auto pr-1">
                         <p class="text-xs text-slate-500">Cargando...</p>
                     </div>
                 </div>
@@ -440,6 +443,9 @@
 
         function renderInsightList(elementId, items) {
             const el = document.getElementById(elementId);
+            const countEl = document.getElementById(`${elementId}Count`);
+            if (countEl) countEl.innerText = items.length ? `(${items.length})` : '';
+
             if (!items.length) {
                 el.innerHTML = `<p class="text-xs text-slate-500">Sin hallazgos en este período.</p>`;
                 return;
