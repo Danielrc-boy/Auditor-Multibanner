@@ -77,6 +77,64 @@
                     </div>
                 </div>
             </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+                    <span class="text-slate-400 text-xs font-medium">Distribuci&oacute;n Num&eacute;rica (% DN)</span>
+                    <p id="execDN" class="text-3xl font-extrabold text-cyan-400 mt-2">--%</p>
+                    <p id="execDNNote" class="text-[10px] text-slate-500 mt-1">Cargando...</p>
+                </div>
+                <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+                    <span class="text-slate-400 text-xs font-medium">Distribuci&oacute;n Ponderada (% DP)</span>
+                    <p id="execDP" class="text-3xl font-extrabold text-fuchsia-400 mt-2">--%</p>
+                    <p id="execDPNote" class="text-[10px] text-slate-500 mt-1">Cargando...</p>
+                </div>
+                <div class="p-5 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+                    <span class="text-slate-400 text-xs font-medium">% Promocionado (Cliente)</span>
+                    <p id="execPromoted" class="text-3xl font-extrabold text-orange-400 mt-2">--%</p>
+                    <p id="execPromotedNote" class="text-[10px] text-slate-500 mt-1">Cargando...</p>
+                </div>
+            </div>
+            <p class="text-[10px] text-slate-500 mt-2">
+                Digital Shelf Audit, no Retail Audit -- no mide ventas reales.
+                <a href="/methodology" target="_blank" class="text-indigo-300 underline hover:text-indigo-200">Ver metodolog&iacute;a completa</a>.
+            </p>
+        </div>
+
+        <!-- ALERTAS Y OPORTUNIDADES -->
+        <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
+            <div class="border-b border-slate-700/50 pb-4">
+                <h2 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-bell text-rose-400"></i> Alertas y Oportunidades
+                </h2>
+                <p class="text-xs text-slate-400">Generadas autom&aacute;ticamente por celda (retailer &times; t&eacute;rmino de b&uacute;squeda) contra los umbrales est&aacute;ndar de Digital Shelf Audit -- cada una con su n&uacute;mero real.</p>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div>
+                    <h3 class="text-xs font-bold text-rose-400 uppercase mb-2 flex items-center gap-1">
+                        <i class="fa-solid fa-triangle-exclamation"></i> Alertas
+                    </h3>
+                    <div id="insightsAlertas" class="space-y-2">
+                        <p class="text-xs text-slate-500">Cargando...</p>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold text-amber-400 uppercase mb-2 flex items-center gap-1">
+                        <i class="fa-solid fa-arrow-trend-up"></i> Oportunidades
+                    </h3>
+                    <div id="insightsOportunidades" class="space-y-2">
+                        <p class="text-xs text-slate-500">Cargando...</p>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold text-emerald-400 uppercase mb-2 flex items-center gap-1">
+                        <i class="fa-solid fa-star"></i> Fortalezas
+                    </h3>
+                    <div id="insightsFortalezas" class="space-y-2">
+                        <p class="text-xs text-slate-500">Cargando...</p>
+                    </div>
+                </div>
+            </div>
+            <div id="insightsExcludedNote" class="text-[10px] text-slate-500 pt-2 border-t border-slate-800 hidden"></div>
         </div>
 
         <!-- FILTROS GLOBALES -->
@@ -255,6 +313,7 @@
                 const res = await fetch(url);
                 const data = await res.json();
                 renderExecutiveSummary(data);
+                loadInsights();
             } catch (err) {
                 console.error("Error cargando resumen ejecutivo:", err);
             }
@@ -327,6 +386,70 @@
                     return `<p class="text-xs text-slate-300 flex justify-between gap-2"><span>${metricLabels[key]}</span><span class="text-indigo-300 font-semibold">${arrow} ${Math.abs(t.change_pp)}pp</span></p>`;
                 }).join('');
             }
+
+            // --- Distribución Numérica / Ponderada / % Promocionado (Nielsen) ---
+            const dist = (data.detail || {}).distribution || {};
+
+            const dn = period.dn_pct;
+            document.getElementById('execDN').innerText = (dn === null || dn === undefined) ? '—' : `${dn}%`;
+            document.getElementById('execDNNote').innerText =
+                `${dist.retailers_with_client_presence ?? 0} de ${dist.active_retailers ?? 0} retailers activos`;
+
+            const dp = period.dp_pct;
+            document.getElementById('execDP').innerText = (dp === null || dp === undefined) ? '—' : `${dp}%`;
+            document.getElementById('execDPNote').innerText = 'Ponderado por tamaño de catálogo capturado por retailer';
+
+            const promoted = period.pct_promoted;
+            document.getElementById('execPromoted').innerText = (promoted === null || promoted === undefined) ? '—' : `${promoted}%`;
+            const excludedFromPromoted = dist.excluded_from_promoted || [];
+            document.getElementById('execPromotedNote').innerText = excludedFromPromoted.length
+                ? `${dist.client_promoted_skus ?? 0} de ${dist.client_skus_promotable ?? 0} SKUs (excluye ${excludedFromPromoted.join(', ')})`
+                : `${dist.client_promoted_skus ?? 0} de ${dist.client_skus_promotable ?? 0} SKUs`;
+        }
+
+        async function loadInsights() {
+            const retailer = document.getElementById('filterRetailer').value;
+            const term = document.getElementById('filterTerm').value;
+            const dateFrom = document.getElementById('execDateFrom').value;
+            const dateTo = document.getElementById('execDateTo').value;
+
+            try {
+                let url = `${API_BASE}/insights?retailer=${retailer}&search_term=${term}`;
+                if (dateFrom) url += `&date_from=${dateFrom}`;
+                if (dateTo) url += `&date_to=${dateTo}`;
+                const res = await fetch(url);
+                const data = await res.json();
+
+                renderInsightList('insightsAlertas', data.alertas || []);
+                renderInsightList('insightsOportunidades', data.oportunidades || []);
+                renderInsightList('insightsFortalezas', data.fortalezas || []);
+
+                const excludedNote = document.getElementById('insightsExcludedNote');
+                const excludedCells = data.excluded_cells || [];
+                if (excludedCells.length) {
+                    const excludedRetailers = [...new Set(excludedCells.map(c => c.retailer))];
+                    excludedNote.classList.remove('hidden');
+                    excludedNote.innerText = `Excluidos de este análisis por calidad de dato de marca: ${excludedRetailers.join(', ')} -- ver /methodology.`;
+                } else {
+                    excludedNote.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error("Error cargando insights:", err);
+            }
+        }
+
+        function renderInsightList(elementId, items) {
+            const el = document.getElementById(elementId);
+            if (!items.length) {
+                el.innerHTML = `<p class="text-xs text-slate-500">Sin hallazgos en este período.</p>`;
+                return;
+            }
+            el.innerHTML = items.map(i => `
+                <div class="p-3 bg-slate-900/60 border border-slate-700/40 rounded-lg">
+                    <span class="text-[10px] font-bold text-slate-300 block mb-1">${i.retailer} &middot; ${i.termino_o_producto}</span>
+                    <p class="text-xs text-slate-400">${i.mensaje_especifico}</p>
+                </div>
+            `).join('');
         }
 
         async function loadFilterOptions() {

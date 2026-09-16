@@ -12,6 +12,7 @@ from datetime import datetime
 from fastapi import APIRouter, Query
 from app.database import get_db_connection
 from app.services.client_brands import CLIENT_BRANDS
+from app.services.insights_engine import build_insights
 
 router = APIRouter(tags=["analytics"])
 
@@ -807,3 +808,63 @@ def _build_methodology() -> dict:
 @router.get("/methodology")
 def get_methodology():
     return _build_methodology()
+
+
+@router.get("/insights")
+@router.get("/insights/")
+def get_insights(
+    retailer: Optional[str] = Query(None),
+    search_term: Optional[str] = Query(None),
+    date_from: Optional[datetime] = Query(None),
+    date_to: Optional[datetime] = Query(None),
+):
+    """
+    Envuelve app/services/insights_engine.py (agregado en un commit
+    anterior como módulo aislado, pero nunca conectado a un endpoint
+    hasta ahora) -- alertas, oportunidades y fortalezas por celda
+    (retailer, término de búsqueda), cada una con el número real que la
+    sustenta. Mismas convenciones de filtro que /executive-summary.
+
+    build_insights() ya excluye internamente a Cafam y Colsubsidio de
+    todo insight (RETAILERS_WITH_UNRELIABLE_BRAND_FIELD en
+    insights_engine.py) -- ver pendiente documentado en CLAUDE.md sobre
+    revisar esa exclusión ahora que su "brand" ya es confiable. No se
+    toca aquí a propósito.
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            where_sql = " WHERE 1=1"
+            params = []
+            if retailer and retailer != "ALL":
+                where_sql += " AND retailer ILIKE %s"
+                params.append(f"%{retailer}%")
+            if search_term and search_term != "ALL":
+                where_sql += " AND search_term ILIKE %s"
+                params.append(f"%{search_term}%")
+            if date_from:
+                where_sql += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date >= %s::date"
+                params.append(date_from)
+            if date_to:
+                where_sql += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
+                params.append(date_to)
+
+            sql = f"""
+                SELECT DISTINCT ON (retailer, search_term, product_name)
+                    retailer,
+                    search_term,
+                    product_name,
+                    brand,
+                    price,
+                    discount_price,
+                    is_available,
+                    position
+                FROM scraper_results
+                {where_sql}
+                ORDER BY retailer, search_term, product_name, id DESC;
+            """
+            cur.execute(sql, tuple(params))
+            rows = [dict(r) for r in cur.fetchall()]
+        return build_insights(rows, CLIENT_BRANDS, RETAILERS_WITH_RELIABLE_AVAILABILITY)
+    finally:
+        conn.close()
