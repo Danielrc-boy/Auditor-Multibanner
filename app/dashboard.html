@@ -96,7 +96,7 @@
             </div>
             <p class="text-[10px] text-slate-500 mt-2">
                 Digital Shelf Audit, no Retail Audit -- no mide ventas reales.
-                <a href="/methodology" target="_blank" class="text-indigo-300 underline hover:text-indigo-200">Ver metodolog&iacute;a completa</a>.
+                <a href="/methodology-page" target="_blank" class="text-indigo-300 underline hover:text-indigo-200">Ver metodolog&iacute;a completa</a>.
             </p>
         </div>
 
@@ -432,7 +432,7 @@
                 if (excludedCells.length) {
                     const excludedRetailers = [...new Set(excludedCells.map(c => c.retailer))];
                     excludedNote.classList.remove('hidden');
-                    excludedNote.innerText = `Excluidos de este análisis por calidad de dato de marca: ${excludedRetailers.join(', ')} -- ver /methodology.`;
+                    excludedNote.innerText = `Excluidos de este análisis por calidad de dato de marca: ${excludedRetailers.join(', ')} -- ver metodología.`;
                 } else {
                     excludedNote.classList.add('hidden');
                 }

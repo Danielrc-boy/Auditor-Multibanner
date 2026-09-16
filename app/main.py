@@ -70,3 +70,16 @@ def get_internal_tools_page():
     if os.path.exists("app/internal_tools.html"):
         return FileResponse("app/internal_tools.html")
     raise HTTPException(status_code=404, detail="internal_tools.html no encontrado.")
+
+@app.get("/methodology-page")
+def get_methodology_page():
+    # GET /methodology (en app/routers/analytics.py) sigue existiendo
+    # como endpoint de datos JSON para el resto del sistema -- esta
+    # página aparte es la versión legible para el cliente final, a la
+    # que apunta el link "Ver metodología completa" en dashboard.html.
+    # Hace fetch a /methodology y lo renderiza con formato (ver
+    # methodology.html) -- no duplica el texto a mano, para que nunca
+    # se desincronice de _build_methodology().
+    if os.path.exists("app/methodology.html"):
+        return FileResponse("app/methodology.html")
+    raise HTTPException(status_code=404, detail="methodology.html no encontrado.")
