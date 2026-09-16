@@ -1,0 +1,62 @@
+[
+  {
+    "retailer_code": "larebaja",
+    "total_skus": 41,
+    "client_skus": 29,
+    "client_promoted_skus": 0
+  },
+  {
+    "retailer_code": "locatel",
+    "total_skus": 68,
+    "client_skus": 38,
+    "client_promoted_skus": 7
+  },
+  {
+    "retailer_code": "colsubsidio",
+    "total_skus": 38,
+    "client_skus": 0,
+    "client_promoted_skus": 0
+  },
+  {
+    "retailer_code": "pasteur",
+    "total_skus": 49,
+    "client_skus": 28,
+    "client_promoted_skus": 6
+  },
+  {
+    "retailer_code": "cafam",
+    "total_skus": 32,
+    "client_skus": 0,
+    "client_promoted_skus": 0
+  },
+  {
+    "retailer_code": "coopidrogas",
+    "total_skus": 35,
+    "client_skus": 26,
+    "client_promoted_skus": 0
+  },
+  {
+    "retailer_code": "farmatodo",
+    "total_skus": 65,
+    "client_skus": 60,
+    "client_promoted_skus": 5
+  },
+  {
+    "retailer_code": "rappi",
+    "total_skus": 41,
+    "client_skus": 41,
+    "client_promoted_skus": 0
+  },
+  {
+    "retailer_code": "carulla",
+    "total_skus": 148,
+    "client_skus": 63,
+    "client_promoted_skus": 29
+  },
+  {
+    "retailer_code": "exito",
+    "total_skus": 141,
+    "client_skus": 75,
+    "client_promoted_skus": 35
+  }
+]

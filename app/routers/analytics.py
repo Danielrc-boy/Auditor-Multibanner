@@ -59,6 +59,17 @@ RETAILERS_WITH_RELIABLE_AVAILABILITY = {"farmatodo"}
 # None ("Datos insuficientes") a un número que sabemos contaminado.
 RETAILERS_WITH_UNRELIABLE_PRICE_INDEX = {"colsubsidio"}
 
+# Retailers cuyo discount_price NUNCA refleja un descuento real (ver
+# "discount_price puede no estar disponible" y "No asumir que
+# discount_price=null significa..." en CLAUDE.md): Cafam porque su
+# endpoint de búsqueda AJAX no expone el precio de oferta real
+# (confirmado 2026-09-14), Rappi porque solo trae discount_price cuando
+# el JSON-LD lo declara explícitamente, algo que casi nunca ocurre.
+# % Promocionado los excluye para no subestimar el % real de SKUs del
+# cliente en oferta -- incluirlos sumaría "0 promocionados" de forma
+# artificial, no porque de verdad no tengan ofertas activas.
+RETAILERS_WITHOUT_RELIABLE_DISCOUNT = {"cafam", "rappi"}
+
 
 @router.get("/analytics/options")
 def get_filter_options():
@@ -374,6 +385,133 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
     }
 
 
+def _fetch_retailer_distribution_stats(cur, where_sql: str, params: list) -> list:
+    """
+    Por cada retailer ACTIVO (tabla `retailers`, is_active=TRUE) -- no
+    solo los que tengan filas en scraper_results -- devuelve total_skus
+    (cualquier marca), client_skus y client_promoted_skus, todos sobre
+    el ÚLTIMO snapshot de cada SKU dentro del filtro dado (mismo criterio
+    de deduplicación que _fetch_summary_metrics). Un retailer activo sin
+    ninguna captura en el período queda con todo en 0 (LEFT JOIN), no se
+    excluye -- eso es justamente lo que penaliza el % DN/DP.
+
+    Función separada de _compute_distribution_metrics (pura, sin DB) a
+    propósito: así esta última se puede probar con datos reales
+    capturados sin necesitar una conexión a Postgres.
+    """
+    sql = f"""
+        WITH latest_snapshot AS (
+            SELECT DISTINCT ON (retailer, search_term, product_name)
+                LOWER(retailer) AS retailer_code,
+                LOWER(COALESCE(brand, 'sin marca')) AS brand_lower,
+                price,
+                discount_price
+            FROM scraper_results
+            {where_sql}
+            ORDER BY retailer, search_term, product_name, id DESC
+        ),
+        retailer_stats AS (
+            SELECT
+                retailer_code,
+                COUNT(*) AS total_skus,
+                COUNT(*) FILTER (WHERE brand_lower = ANY(%s)) AS client_skus,
+                COUNT(*) FILTER (
+                    WHERE brand_lower = ANY(%s)
+                    AND discount_price IS NOT NULL AND discount_price > 0 AND discount_price < price
+                ) AS client_promoted_skus
+            FROM latest_snapshot
+            GROUP BY retailer_code
+        )
+        SELECT
+            r.code AS retailer_code,
+            COALESCE(rs.total_skus, 0) AS total_skus,
+            COALESCE(rs.client_skus, 0) AS client_skus,
+            COALESCE(rs.client_promoted_skus, 0) AS client_promoted_skus
+        FROM retailers r
+        LEFT JOIN retailer_stats rs ON rs.retailer_code = r.code
+        WHERE r.is_active = TRUE;
+    """
+    cur.execute(sql, tuple(params) + (CLIENT_BRANDS, CLIENT_BRANDS))
+    return [dict(row) for row in cur.fetchall()]
+
+
+def _compute_distribution_metrics(retailer_stats: list) -> dict:
+    """
+    Calcula Distribución Numérica (% DN), Distribución Ponderada (% DP) y
+    % Promocionado -- terminología oficial de Nielsen para Digital Shelf
+    Audit (ver GET /methodology: esto NO es Retail Audit clásico basado
+    en ventas, no tenemos datos de unidades vendidas ni cuota de mercado
+    real).
+
+    retailer_stats: lista de dicts {retailer_code, total_skus,
+    client_skus, client_promoted_skus}, uno por retailer ACTIVO (ver
+    _fetch_retailer_distribution_stats).
+
+    % DN: de los retailers activos, cuántos tienen al menos 1 SKU del
+    cliente en el snapshot más reciente del período. Medida binaria de
+    presencia por retailer -- no le importa CUÁNTOS SKUs del cliente
+    hay, solo si hay al menos uno.
+        DN = retailers con presencia del cliente / total retailers activos * 100
+
+    % DP: igual que DN pero ponderada por el tamaño relativo de cada
+    retailer. Usamos total_skus capturados (de cualquier marca) como
+    proxy del tamaño de su catálogo/anaquel porque no tenemos datos
+    reales de tráfico o ventas por retailer (ver /methodology).
+        DP = Σ total_skus de retailers con presencia / Σ total_skus de TODOS los activos * 100
+
+    % Promocionado: de los SKUs del cliente en el período, EXCLUYENDO
+    los retailers en RETAILERS_WITHOUT_RELIABLE_DISCOUNT (Cafam, Rappi
+    -- ver nota junto a la constante), qué % tiene discount_price activo.
+        pct_promoted = Σ client_promoted_skus / Σ client_skus (retailers no excluidos) * 100
+
+    Todas devuelven None (no 0) cuando el denominador es 0 -- "sin
+    datos", nunca "0%" engañoso.
+    """
+    total_active_retailers = len(retailer_stats)
+    retailers_with_presence = [r for r in retailer_stats if r["client_skus"] > 0]
+
+    dn_pct = (
+        round(len(retailers_with_presence) / total_active_retailers * 100, 1)
+        if total_active_retailers > 0
+        else None
+    )
+
+    total_catalog_size = sum(r["total_skus"] for r in retailer_stats)
+    client_catalog_size = sum(r["total_skus"] for r in retailers_with_presence)
+    dp_pct = (
+        round(client_catalog_size / total_catalog_size * 100, 1)
+        if total_catalog_size > 0
+        else None
+    )
+
+    promotable_rows = [
+        r for r in retailer_stats if r["retailer_code"] not in RETAILERS_WITHOUT_RELIABLE_DISCOUNT
+    ]
+    client_skus_promotable = sum(r["client_skus"] for r in promotable_rows)
+    client_promoted_skus = sum(r["client_promoted_skus"] for r in promotable_rows)
+    pct_promoted = (
+        round(client_promoted_skus / client_skus_promotable * 100, 1)
+        if client_skus_promotable > 0
+        else None
+    )
+
+    return {
+        "dn_pct": dn_pct,
+        "dp_pct": dp_pct,
+        "pct_promoted": pct_promoted,
+        "raw": {
+            "active_retailers": total_active_retailers,
+            "retailers_with_client_presence": len(retailers_with_presence),
+            "total_catalog_size": total_catalog_size,
+            "client_catalog_size": client_catalog_size,
+            "client_skus_promotable": client_skus_promotable,
+            "client_promoted_skus": client_promoted_skus,
+            "excluded_from_promoted": sorted(RETAILERS_WITHOUT_RELIABLE_DISCOUNT),
+            "by_retailer": retailer_stats,
+        },
+    }
+
+
 def _distinct_retailers(cur, where_sql: str, params: list) -> set:
     """Retailers (en minúsculas) presentes en scraper_results bajo el filtro dado."""
     cur.execute(f"SELECT DISTINCT LOWER(retailer) AS r FROM scraper_results {where_sql};", tuple(params))
@@ -446,12 +584,25 @@ def get_executive_summary(
     respuesta distinta (KPIs con tendencia, no series para gráficas), así
     que mezclarlo en la misma función habría complicado ambas cosas.
 
-    - retailer/search_term/date_from/date_to: filtran las 3 métricas del
-      "período seleccionado" (si no se pasan, es histórico completo).
+    - retailer/search_term/date_from/date_to: filtran las 3 métricas
+      originales del "período seleccionado" (si no se pasan, es
+      histórico completo).
     - La tendencia (últimos 7 días vs. los 7 días anteriores) SIEMPRE usa
       esa ventana fija de 14 días, sin importar date_from/date_to -- solo
       hereda el filtro de retailer/search_term para mantener consistencia
       con lo que el usuario esté viendo.
+
+    KPIs de Nielsen (Digital Shelf Audit, ver GET /methodology) agregados
+    2026-09-15: dn_pct (% Distribución Numérica), dp_pct (% Distribución
+    Ponderada) y pct_promoted (% Promocionado) -- ver
+    _compute_distribution_metrics para las fórmulas exactas y sus
+    limitaciones documentadas. Dos diferencias importantes respecto a
+    las 3 métricas originales:
+      1. dn_pct/dp_pct ignoran el filtro `retailer` a propósito (son
+         medidas cross-retailer por definición) -- sí respetan
+         search_term/date_from/date_to.
+      2. Ninguna de las 3 tiene tendencia semana a semana todavía (no
+         se pidió) -- solo aparecen en "period", no en "trend".
     """
     conn = get_db_connection()
     try:
@@ -500,6 +651,26 @@ def get_executive_summary(
             if _price_index_data_quality(previous_retailers) == "partial":
                 previous_metrics["price_index"] = None
 
+            # % DN / % DP son medidas CROSS-retailer por definición (de
+            # cuántos retailers activos tiene presencia el cliente) --
+            # aplicarles el filtro `retailer` las volvería triviales
+            # (100% o 0% según si ese retailer tiene presencia o no), así
+            # que a propósito NO heredan common_where (que sí incluye el
+            # filtro de retailer), solo search_term/date_from/date_to.
+            distribution_where = " WHERE 1=1"
+            distribution_params = []
+            if search_term and search_term != "ALL":
+                distribution_where += " AND search_term ILIKE %s"
+                distribution_params.append(f"%{search_term}%")
+            if date_from:
+                distribution_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date >= %s::date"
+                distribution_params.append(date_from)
+            if date_to:
+                distribution_where += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
+                distribution_params.append(date_to)
+            retailer_stats = _fetch_retailer_distribution_stats(cur, distribution_where, distribution_params)
+            distribution_metrics = _compute_distribution_metrics(retailer_stats)
+
         # Si la cobertura de retailers cambió entre las dos ventanas de 7
         # días (ej. se agregaron retailers nuevos a mitad de semana), la
         # diferencia actual-vs-anterior mezcla movimiento real de mercado
@@ -526,6 +697,9 @@ def get_executive_summary(
                 "availability_pct": period_metrics["availability_pct"],
                 "availability_data_quality": availability_data_quality,
                 "price_index_data_quality": price_index_data_quality,
+                "dn_pct": distribution_metrics["dn_pct"],
+                "dp_pct": distribution_metrics["dp_pct"],
+                "pct_promoted": distribution_metrics["pct_promoted"],
             },
             "trend": trend_result,
             "coverage_changed": coverage_changed,
@@ -536,7 +710,100 @@ def get_executive_summary(
                 "previous_7d": previous_metrics["raw"],
                 "current_7d_retailers": sorted(current_retailers),
                 "previous_7d_retailers": sorted(previous_retailers),
+                "distribution": distribution_metrics["raw"],
             },
         }
     finally:
         conn.close()
+
+
+def _build_methodology() -> dict:
+    """
+    Texto de metodología reutilizable -- función pura (sin DB, sin
+    FastAPI) para poder importarla/probarla directamente. GET
+    /methodology solo la envuelve.
+    """
+    return {
+        "audit_type": "Digital Shelf Audit",
+        "is_retail_audit": False,
+        "disclaimer": (
+            "Este sistema audita el ANAQUEL DIGITAL (presencia, precio, "
+            "disponibilidad y promociones online) de las marcas Essity "
+            "frente a la competencia, en los sitios de e-commerce de los "
+            "retailers monitoreados. Usa terminología estándar de la "
+            "industria (Nielsen) para estas métricas de anaquel digital, "
+            "pero NO es un Retail Audit clásico: no mide unidades "
+            "vendidas, ingresos, ni cuota de mercado real -- esos datos "
+            "requieren paneles de punto de venta o datos de ventas (POS) "
+            "que este sistema no captura y no puede inferir a partir de "
+            "scraping de catálogos online."
+        ),
+        "metrics": {
+            "share_of_shelf_pct": (
+                "Share of Shelf: % de los SKUs capturados en el período "
+                "(de cualquier marca) que son de marcas cliente. Mide "
+                "presencia relativa en el anaquel digital, no ventas."
+            ),
+            "price_index": (
+                "Índice de Precio: precio promedio efectivo (con "
+                "descuento si aplica) del cliente / precio promedio "
+                "efectivo de la competencia * 100. 100 = paridad; >100 "
+                "= cliente más caro; <100 = cliente más barato. No "
+                f"confiable para: {sorted(RETAILERS_WITH_UNRELIABLE_PRICE_INDEX)} "
+                "(ver 'known_data_quality_caveats')."
+            ),
+            "availability_pct": (
+                "Disponibilidad: % de SKUs del cliente marcados como "
+                "disponibles (in stock) en la última captura. Calidad de "
+                "dato completa solo para: "
+                f"{sorted(RETAILERS_WITH_RELIABLE_AVAILABILITY)} -- los "
+                "demás retailers descartan productos agotados antes de "
+                "guardarlos o no verifican stock, así que un 100% en "
+                "ellos no distingue 'todo en stock' de 'no lo medimos'."
+            ),
+            "dn_pct": (
+                "Distribución Numérica (% DN): % de los retailers "
+                "ACTIVOS donde el cliente tiene al menos 1 SKU presente "
+                "en la captura más reciente. Medida binaria de presencia "
+                "por retailer -- ignora el filtro `retailer` de "
+                "/executive-summary a propósito (es una medida "
+                "cross-retailer por definición)."
+            ),
+            "dp_pct": (
+                "Distribución Ponderada (% DP): igual que % DN, pero "
+                "ponderada por el tamaño relativo del catálogo capturado "
+                "en cada retailer (total de SKUs de cualquier marca) "
+                "como proxy del tamaño de su anaquel -- NO tenemos datos "
+                "reales de tráfico o ventas por retailer, así que es una "
+                "aproximación, no el % DP clásico de Nielsen (que se "
+                "pondera por ventas reales del retailer)."
+            ),
+            "pct_promoted": (
+                "% Promocionado: % de los SKUs del cliente con "
+                "discount_price activo en el período. Excluye "
+                f"{sorted(RETAILERS_WITHOUT_RELIABLE_DISCOUNT)} porque su "
+                "discount_price nunca refleja un descuento real (ver "
+                "'known_data_quality_caveats') -- incluirlos subestimaría "
+                "el % real en vez de reflejarlo."
+            ),
+        },
+        "known_data_quality_caveats": [
+            "Cafam: discount_price siempre None -- su endpoint de "
+            "búsqueda no expone el precio de oferta real.",
+            "Rappi: discount_price solo se captura cuando el JSON-LD del "
+            "sitio lo declara explícitamente, algo que casi nunca ocurre.",
+            "Colsubsidio: price_index se fuerza a None -- su buscador "
+            "VTEX mezcla productos de otra categoría (copas menstruales, "
+            "kits reutilizables) con toallas desechables reales, lo que "
+            "distorsiona el precio promedio de competencia (pendiente: "
+            "filtro de relevancia de categoría, ver CLAUDE.md).",
+            "Disponibilidad: solo Farmatodo verifica y guarda stock "
+            "agotado de forma confiable -- los demás retailers filtran "
+            "productos agotados antes de guardarlos o no lo verifican.",
+        ],
+    }
+
+
+@router.get("/methodology")
+def get_methodology():
+    return _build_methodology()
