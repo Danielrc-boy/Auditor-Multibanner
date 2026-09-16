@@ -70,13 +70,3 @@ def get_internal_tools_page():
     if os.path.exists("app/internal_tools.html"):
         return FileResponse("app/internal_tools.html")
     raise HTTPException(status_code=404, detail="internal_tools.html no encontrado.")
-
-
-# --- ENDPOINT TEMPORAL DE PRUEBA: solo para validar Cruz Verde antes de ---
-# --- integrarlo al flujo completo de guardado. Se retira despues de confirmar. ---
-@app.get("/admin/test-cruzverde")
-async def test_cruzverde(q: str = "toallas"):
-    from app.services.scrapers.cruzverde_scraper import CruzVerdeScraper
-    scraper = CruzVerdeScraper()
-    results_list = await scraper.search_keyword(q, limit=10)
-    return {"total": len(results_list), "productos": [r.dict() for r in results_list]}
