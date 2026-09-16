@@ -1,0 +1,41 @@
+[
+  {
+    "productId": "6428",
+    "productName": "Toallas Higiénicas Nosotras Invisible Sensitive",
+    "brand": "PRODUCTOS FAMILIA SA",
+    "brandId": 2000370,
+    "Marca Comercial": ["Nosotras"],
+    "items": [
+      {
+        "sellers": [
+          {
+            "commertialOffer": {
+              "Price": 9250.0,
+              "ListPrice": 9250.0,
+              "IsAvailable": true
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "productId": "9001",
+    "productName": "Jabón Líquido para Manos Protex",
+    "brand": "COLGATE PALMOLIVE COMPANIA",
+    "brandId": 3100221,
+    "items": [
+      {
+        "sellers": [
+          {
+            "commertialOffer": {
+              "Price": 8500.0,
+              "ListPrice": 8500.0,
+              "IsAvailable": true
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

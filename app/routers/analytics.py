@@ -11,6 +11,7 @@ from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Query
 from app.database import get_db_connection
+from app.services.client_brands import CLIENT_BRANDS
 
 router = APIRouter(tags=["analytics"])
 
@@ -32,13 +33,10 @@ router = APIRouter(tags=["analytics"])
 # "todo en stock" de "no medimos lo agotado".
 RETAILERS_WITH_RELIABLE_AVAILABILITY = {"farmatodo"}
 
-# Marcas que cuentan como "cliente" para las métricas ejecutivas
-# (Share of Shelf, Índice de Precio, Disponibilidad). El sistema es
-# multi-cliente por diseño: para monitorear otro cliente en el futuro,
-# el único cambio necesario es esta lista -- no hay nombres de marca
-# hardcodeados en ninguna otra parte de /executive-summary.
-# En minúsculas porque se compara contra LOWER(brand) en SQL.
-CLIENT_BRANDS = ["nosotras", "pequeñin", "pequeñín", "tena", "zewa"]
+# CLIENT_BRANDS ahora vive en app/services/client_brands.py (única fuente
+# de verdad, compartida con cafam_scraper.py y el motor de insights) --
+# se re-exporta aquí para no romper otros módulos que ya hacen
+# `from app.routers.analytics import CLIENT_BRANDS`.
 
 
 @router.get("/analytics/options")

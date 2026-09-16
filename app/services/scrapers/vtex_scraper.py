@@ -50,6 +50,15 @@ RETAILER_CONFIGS = {
         "search_style": "path",    # confirmado: /api/catalog_system/pub/products/search/{keyword}
         "use_io_prefix": False,    # confirmado: SIN /io/ delante
         "use_scraperapi": False,   # sin bloqueo confirmado hasta ahora
+        # Limitación conocida (confirmada 2026-09-15 con JSON real): el
+        # campo "brand" de Colsubsidio trae la razón social del
+        # fabricante/distribuidor (ej. "PRODUCTOS FAMILIA SA"), no la
+        # marca comercial. Su catálogo SÍ expone la marca real en un
+        # campo de especificación separado -- "Marca Comercial" (ej.
+        # ["Nosotras"]). Solo se activa para este retailer porque es el
+        # único donde se confirmó el problema con evidencia real; los
+        # otros 6 VTEX no se tocan sin verificar cada uno primero.
+        "brand_specification_field": "Marca Comercial",
     },
     "pasteur": {
         "base_url": "https://www.farmaciaspasteur.com.co",
@@ -66,6 +75,16 @@ RETAILER_CONFIGS = {
 }
 
 DEFAULT_CONFIG = RETAILER_CONFIGS["exito"]
+
+
+def _resolve_brand(product: dict, config: dict) -> str:
+    """Resuelve la marca de un producto VTEX -- usa el campo de
+    especificación configurado en brand_specification_field (si el
+    retailer lo tiene) antes que el "brand" genérico de VTEX. Ver la nota
+    en RETAILER_CONFIGS["colsubsidio"] para el porqué."""
+    spec_field = config.get("brand_specification_field")
+    spec_values = product.get(spec_field) if spec_field else None
+    return (spec_values[0] if spec_values else None) or product.get("brand") or "Sin Marca"
 
 
 class VTEXScraper:
@@ -131,7 +150,7 @@ class VTEXScraper:
                 for product in items_list[:limit]:
                     try:
                         title = product.get("productName") or product.get("productTitle") or ""
-                        brand = product.get("brand") or "Sin Marca"
+                        brand = _resolve_brand(product, self.config)
 
                         base_price = 0.0
                         discount_price = None

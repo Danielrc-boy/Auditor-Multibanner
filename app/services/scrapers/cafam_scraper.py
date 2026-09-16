@@ -9,7 +9,22 @@ El endpoint de búsqueda estándar de PrestaShop:
 
 devuelve un JSON con una lista "products" ya estructurada (no hace falta
 parsear HTML) -- confirmado con datos reales: id_product, price_amount,
-regular_price_amount, has_discount, manufacturer_name (marca), position.
+regular_price_amount, has_discount, manufacturer_name, position.
+
+Limitación conocida (brand): confirmado con evidencia real (2026-09-15)
+que "manufacturer_name" NO es la marca comercial -- es la razón social
+del fabricante/distribuidor (ej. "PRODUCTOS FAMILIA S.A.",
+"OPERADOR LOGISTICO INT DE MEDI"). Este endpoint no expone NINGÚN campo
+de marca comercial real; la única señal disponible es el nombre del
+producto ("name"), donde la marca sí aparece como texto libre (ej.
+"Toallas Nosotras Buenas Noches..."). Por eso _detect_client_brand()
+busca las marcas cliente (CLIENT_BRANDS) como palabra completa dentro de
+"name" ANTES de usar manufacturer_name -- corrige la clasificación
+cliente-vs-competencia (Share of Shelf, Índice de Precio, motor de
+insights), pero es un fix parcial a propósito: para productos de
+competencia, "brand" sigue siendo la razón social, no una marca real --
+eso no se intenta arreglar aquí porque requeriría un mapeo mucho más
+amplio y frágil, y no es lo que rompía la clasificación del cliente.
 
 Limitación conocida: este JSON no expone un campo explícito de stock/
 disponibilidad (a diferencia del HTML de la misma página, que sí marca
@@ -33,10 +48,12 @@ Rappi. Revisar esta decisión si el costo de ScraperAPI deja de ser un
 problema o si el descuento se vuelve crítico para el negocio.
 """
 import os
+import re
 import urllib.parse
 import httpx
 from typing import List, Optional
 from pydantic import BaseModel
+from app.services.client_brands import CLIENT_BRANDS
 
 SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "")
 
@@ -49,6 +66,17 @@ class ExtractedProductData(BaseModel):
     base_price: float = 0.0
     discount_price: Optional[float] = None
     in_stock: bool = True
+
+
+def _detect_client_brand(title: str) -> Optional[str]:
+    """Busca una marca cliente (CLIENT_BRANDS) como palabra completa
+    dentro del nombre del producto -- ver limitación documentada arriba
+    sobre por qué manufacturer_name no sirve para esto."""
+    title_lower = title.lower()
+    for b in CLIENT_BRANDS:
+        if re.search(rf"\b{re.escape(b)}\b", title_lower):
+            return b
+    return None
 
 
 class CafamScraper:
@@ -109,7 +137,7 @@ class CafamScraper:
                 if not title:
                     continue
 
-                brand = (item.get("manufacturer_name") or "Sin Marca").strip()
+                brand = _detect_client_brand(title) or (item.get("manufacturer_name") or "Sin Marca").strip()
 
                 base_price = float(item.get("regular_price_amount") or item.get("price_amount") or 0.0)
                 discount_price = None
