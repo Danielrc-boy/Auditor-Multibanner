@@ -272,6 +272,31 @@ forzando `price_index` a None para este retailer
 exista un filtro de relevancia de categoría. Detalle completo en
 "Lecciones aprendidas" más abajo (pendiente sin resolver).
 
+**IMPORTANTE -- `dn_pct`/`dp_pct`/`pct_promoted` de HOY (2026-09-15) están
+temporalmente deprimidos, NO es un bug si se ve así en los próximos días.**
+El fix de marca de Cafam/Colsubsidio (arriba) corrige la lógica del
+SCRAPER hacia adelante -- no reescribe retroactivamente las filas que
+ya están guardadas en la base de datos. Confirmado con evidencia real
+(2026-09-15, con el fix ya mergeado a `main` y desplegado): una fila de
+Cafam ("Toallas Nosotras Buenas Noches...") y otra de Colsubsidio
+("Toallas Higiénicas Nosotras Invisible Sensitive") siguen con
+`brand = 'PRODUCTOS FAMILIA S.A.'` guardado, porque fueron capturadas
+por el scraper viejo. Como consecuencia, Cafam y Colsubsidio son HOY
+los únicos 2 de los 10 retailers activos con `client_skus=0`, lo que
+deprime `dn_pct` (80.0% hoy, sería 100.0% si ambos tuvieran presencia)
+y `dp_pct` (89.4% hoy, sería 100.0%). `pct_promoted` (25.7% hoy) no se
+ve afectado por Cafam directamente porque ya está excluido de ese
+cálculo (`RETAILERS_WITHOUT_RELIABLE_DISCOUNT`), pero sí subirá o
+bajará cuando Colsubsidio aporte sus propios SKUs de cliente con
+descuento una vez que se recapture. **Estos 3 números subirán solos
+en cuanto corra una captura nueva y exitosa de Cafam y Colsubsidio**
+-- no hace falta ni se debe "arreglar" nada más en el código para eso.
+Al momento de escribir esto la cuota de ScraperAPI está agotada (ver
+"Retailers que dependen de ScraperAPI" en Lecciones aprendidas) y se
+espera que renueve en ~11 días desde 2026-09-15 (es decir, alrededor
+de 2026-09-26) -- podría ser antes si se resuelve la cuota o se
+dispara `/trigger-now` manualmente para esos dos retailers.
+
 **Pausados (investigados, pero bloqueados o de complejidad/costo alto):**
 - Rappi: multi-banner (Turbo, Pasteur, Farmaya...), requiere login para
   algunos banners, probablemente necesite Playwright (navegador real) en
