@@ -47,7 +47,7 @@ producción.
 
 ## Arquitectura del backend (post-refactor)
 
-`app/main.py` es intencionalmente corto (~45 líneas): solo arranca la app,
+`app/main.py` es intencionalmente corto (~85 líneas): solo arranca la app,
 configura CORS, y conecta routers. TODA la lógica vive en módulos separados:
 
 ```
@@ -232,7 +232,8 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
 ## Retailers -- estado actual
 
 **Producción (main), confirmados y funcionando:**
-Éxito, Carulla, Farmatodo, La Rebaja, Locatel, Colsubsidio*, Pasteur, Cafam*.
+Éxito, Carulla, Farmatodo, La Rebaja, Locatel, Colsubsidio*, Pasteur, Cafam*,
+Coopidrogas, Rappi*.
 
 *Cafam: posición, precio, marca y disponibilidad funcionan bien, pero
 **NO expone descuentos reales vía su endpoint de búsqueda** (limitación
@@ -247,6 +248,23 @@ ScraperAPI por el bloqueo de Cloudflare confirmado. Se decidió no
 implementarlo por el costo; discount_price queda en None para Cafam a
 propósito, no es un bug silencioso. Detalle completo en
 cafam_scraper.py y en "Lecciones aprendidas" más abajo.
+
+*Rappi: **activo en producción**, no pausado -- se reconstruyó por
+completo (commit `259be38`, 2026-09-09) y ya NO requiere token de
+invitado ni login: la página `/search?query=...` viene renderizada en
+servidor (Next.js) con los productos embebidos como datos estructurados
+JSON-LD (`schema.org`), pensados para Google pero igual de útiles para
+nosotros (ver docstring de `rappi_scraper.py`). Corre sin condición
+dentro de `run_all_scraping` en cada captura programada. Tiene filtro
+de relevancia para excluir carruseles genéricos ajenos al término
+buscado (ver "Filtro de relevancia" en Lecciones aprendidas). Igual que
+Cafam, **no expone descuentos reales**: el JSON-LD solo trae un precio
+final único, sin distinguir precio de lista vs. oferta -- por eso está
+excluido de `pct_promoted` vía `RETAILERS_WITHOUT_RELIABLE_DISCOUNT`
+(`{"cafam", "rappi"}` en `app/routers/analytics.py`). No maneja
+multi-banner (Turbo, Pasteur, Farmaya) por separado -- si en el futuro
+se ve necesario diferenciarlos, seguirá siendo trabajo pendiente, pero
+el scraper base ya no está bloqueado ni requiere Playwright.
 
 **Fix de clasificación de marca (Cafam y Colsubsidio, 2026-09-15):**
 ambos exponían la razón social del fabricante/distribuidor en el campo
@@ -298,9 +316,6 @@ de 2026-09-26) -- podría ser antes si se resuelve la cuota o se
 dispara `/trigger-now` manualmente para esos dos retailers.
 
 **Pausados (investigados, pero bloqueados o de complejidad/costo alto):**
-- Rappi: multi-banner (Turbo, Pasteur, Farmaya...), requiere login para
-  algunos banners, probablemente necesite Playwright (navegador real) en
-  vez de peticiones HTTP simples.
 - Cruz Verde: Salesforce Commerce Cloud, protección fuerte en el subdominio
   de API (`api.cruzverde.com.co`) que ni ScraperAPI en modo `ultra_premium`
   logró sortear.
@@ -309,8 +324,7 @@ dispara `/trigger-now` manualmente para esos dos retailers.
   integración de API, no un scraper.
 
 **Pendientes de investigar/agregar** (orden de la lista de Daniel):
-Coopidrogas (confirmado VTEX, vía dominio real farmaexpress.com -- listo
-para agregar), FarmaCenter, Farmalisto (sospecha PrestaShop, sitio bloqueó
+FarmaCenter, Farmalisto (sospecha PrestaShop, sitio bloqueó
 el acceso directo), Merqueo, Surtimax, Super Inter, Jumbo, Uno A droguerías,
 Megatiendas, Tiendas D1, Tiendas Ara (D1 y Ara probablemente sin tienda
 transaccional -- confirmar antes de invertir tiempo), Homecenter (Sodimac),
