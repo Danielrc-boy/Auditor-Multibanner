@@ -41,24 +41,39 @@ RETAILERS_WITH_RELIABLE_AVAILABILITY = {"farmatodo"}
 
 # Retailers cuyo Índice de Precio NO es confiable todavía -- distinto del
 # problema de "brand" ya corregido en Cafam/Colsubsidio (ver
-# client_brands.py y vtex_scraper.py). Aquí el problema es que la
-# búsqueda "Toallas Higienicas" del VTEX intelligent search de
-# Colsubsidio trae mezclados productos de otra categoría (copas
-# menstruales, kits de toallas reutilizables) junto con toallas
-# desechables reales -- confirmado con evidencia real (2026-09-15):
-# "Life Cup Copa Menstrual Talla 0" ($65.322) y "TOALLAS HIGIENICAS
-# REUTILIZABLES LIFEPAD" ($86.550) inflaban el precio promedio de
-# competencia de ~$9.212 (comparable real, solo Siempre Libre/Stayfree/
-# Kotex) a $31.454, lo que distorsionaba el Índice de Precio de ~190%
-# real (cliente más caro) a un engañoso 55.8% (sugería cliente más
-# barato). El problema NO lo introdujo el fix de marca -- ya existía en
-# los datos crudos del sitio; antes era invisible porque client_skus=0
-# siempre volvía price_index=None sin llegar a calcularlo. Ver tarea
-# pendiente en CLAUDE.md sobre el filtro de relevancia de categoría que
-# hace falta (podría afectar a otros retailers VTEX también). Mientras
-# tanto: mismo principio que Cafam con discount_price -- preferimos
-# None ("Datos insuficientes") a un número que sabemos contaminado.
-RETAILERS_WITH_UNRELIABLE_PRICE_INDEX = {"colsubsidio"}
+# client_brands.py y vtex_scraper.py). Aquí el problema es que el
+# buscador VTEX de estos retailers trae mezclados productos de otra
+# categoría (copas menstruales, kits de toallas reutilizables) junto con
+# toallas desechables reales:
+#   - Colsubsidio: confirmado con evidencia real (2026-09-15): "Life Cup
+#     Copa Menstrual Talla 0" ($65.322) y "TOALLAS HIGIENICAS
+#     REUTILIZABLES LIFEPAD" ($86.550) inflaban el precio promedio de
+#     competencia de ~$9.212 (comparable real, solo Siempre Libre/
+#     Stayfree/Kotex) a $31.454, lo que distorsionaba el Índice de
+#     Precio de ~190% real (cliente más caro) a un engañoso 55.8%
+#     (sugería cliente más barato).
+#   - Locatel: mismo patrón, confirmado con evidencia real (2026-09-17)
+#     al investigar por qué su Índice de Precio en el PDF ejecutivo
+#     salía extremo -- "Copa Menstrual UVA Talla B" ($99.900), "Copa
+#     Menstrual LifeCup 1/2" ($78.900 c/u) y "Toallas Higiénicas
+#     Reutilizables LifePad" ($79.950) inflaban el precio promedio de
+#     competencia de $14.517 (comparable real, solo Stayfree/Kotex) a
+#     $29.232 (2x). Se investigó explícitamente a Éxito, Carulla,
+#     Farmatodo, La Rebaja, Pasteur y Coopidrogas con el mismo método
+#     (revisar los productos de competencia más caros y buscar por
+#     palabra clave "copa"/"menstrual"/"reutilizable") y NINGUNO de los
+#     6 mostró contaminación -- el problema es específico de Colsubsidio
+#     y Locatel, no genérico de VTEX.
+# El problema NO lo introdujo el fix de marca -- ya existía en los datos
+# crudos del sitio; en Colsubsidio antes era invisible porque
+# client_skus=0 siempre volvía price_index=None sin llegar a calcularlo.
+# Ver tarea pendiente en CLAUDE.md sobre el filtro de relevancia de
+# categoría que hace falta en vtex_scraper.py (confirmado que afecta a
+# más de un retailer, así que el filtro real debería ser genérico, no
+# hardcodeado a un solo retailer). Mientras tanto: mismo principio que
+# Cafam con discount_price -- preferimos None ("Datos insuficientes") a
+# un número que sabemos contaminado.
+RETAILERS_WITH_UNRELIABLE_PRICE_INDEX = {"colsubsidio", "locatel"}
 
 # Retailers cuyo discount_price NUNCA refleja un descuento real (ver
 # "discount_price puede no estar disponible" y "No asumir que
@@ -798,6 +813,12 @@ def _build_methodology() -> dict:
             "kits reutilizables) con toallas desechables reales, lo que "
             "distorsiona el precio promedio de competencia (pendiente: "
             "filtro de relevancia de categoría, ver CLAUDE.md).",
+            "Locatel: mismo problema y misma mitigación que Colsubsidio "
+            "-- su buscador VTEX también mezcla copas menstruales y "
+            "toallas reutilizables con toallas desechables reales "
+            "(confirmado 2026-09-17); Éxito, Carulla, Farmatodo, La "
+            "Rebaja, Pasteur y Coopidrogas se revisaron con el mismo "
+            "método y no mostraron este problema.",
             "Disponibilidad: solo Farmatodo verifica y guarda stock "
             "agotado de forma confiable -- los demás retailers filtran "
             "productos agotados antes de guardarlos o no lo verifican.",

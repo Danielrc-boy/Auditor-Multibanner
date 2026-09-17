@@ -4,13 +4,15 @@ Pruebas de las funciones puras de app/routers/analytics.py
 _build_methodology). Ninguna requiere base de datos.
 
 Contexto _price_index_data_quality: el Índice de Precio de Colsubsidio
-se descubrió contaminado por productos de otra categoría (copa
-menstrual, kit reutilizable) mezclados en el buscador VTEX -- confirmado
-con evidencia real (2026-09-15, ver nota junto a
-RETAILERS_WITH_UNRELIABLE_PRICE_INDEX). Estas pruebas verifican que ese
-retailer específico fuerza price_index a "partial" (y por lo tanto None
-en el endpoint), sin afectar a los demás retailers ni al Share of
-Shelf/Disponibilidad.
+(2026-09-15) y de Locatel (2026-09-17) se descubrió contaminado por
+productos de otra categoría (copa menstrual, kit reutilizable) mezclados
+en el buscador VTEX -- confirmado con evidencia real para ambos (ver
+nota junto a RETAILERS_WITH_UNRELIABLE_PRICE_INDEX). Los otros 6
+retailers investigados con el mismo método el 2026-09-17 (Éxito,
+Carulla, Farmatodo, La Rebaja, Pasteur, Coopidrogas) NO mostraron el
+problema. Estas pruebas verifican que exactamente esos 2 retailers
+fuerzan price_index a "partial" (y por lo tanto None en el endpoint),
+sin afectar a los demás retailers ni al Share of Shelf/Disponibilidad.
 
 Contexto _compute_distribution_metrics: tests/fixtures/
 distribution_stats_production_2026-09-15.json es evidencia REAL --
@@ -48,6 +50,9 @@ class PriceIndexDataQualityTests(unittest.TestCase):
     def test_colsubsidio_alone_is_partial(self):
         self.assertEqual(_price_index_data_quality({"colsubsidio"}), "partial")
 
+    def test_locatel_alone_is_partial(self):
+        self.assertEqual(_price_index_data_quality({"locatel"}), "partial")
+
     def test_colsubsidio_mixed_with_others_is_still_partial(self):
         self.assertEqual(
             _price_index_data_quality({"colsubsidio", "exito", "cafam"}), "partial"
@@ -59,8 +64,16 @@ class PriceIndexDataQualityTests(unittest.TestCase):
     def test_empty_set_is_complete(self):
         self.assertEqual(_price_index_data_quality(set()), "complete")
 
-    def test_colsubsidio_is_the_only_retailer_flagged(self):
-        self.assertEqual(RETAILERS_WITH_UNRELIABLE_PRICE_INDEX, {"colsubsidio"})
+    def test_exactly_colsubsidio_and_locatel_are_flagged(self):
+        # Confirmado con evidencia real 2026-09-17: Éxito, Carulla,
+        # Farmatodo, La Rebaja, Pasteur y Coopidrogas se investigaron
+        # con el mismo método (productos de competencia más caros +
+        # búsqueda por palabra clave "copa"/"menstrual"/"reutilizable")
+        # y NINGUNO mostró contaminación de categoría -- si este test
+        # falla porque se agregó un retailer nuevo al set, confirmar
+        # primero con evidencia real (ver metodología documentada junto
+        # a RETAILERS_WITH_UNRELIABLE_PRICE_INDEX) antes de aceptarlo.
+        self.assertEqual(RETAILERS_WITH_UNRELIABLE_PRICE_INDEX, {"colsubsidio", "locatel"})
 
 
 class DistributionMetricsRealDataTests(unittest.TestCase):

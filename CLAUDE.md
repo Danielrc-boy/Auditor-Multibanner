@@ -202,9 +202,20 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
   SÍ es confiable y se sigue mostrando normal, porque no depende de
   precio. Pendiente real: agregar un filtro de relevancia de categoría
   (ej. exigir que el título contenga "toalla"/"toallas", o excluir por
-  palabras clave como "copa menstrual"/"reutilizable") en `vtex_scraper.py`
-  -- evaluar si otros retailers VTEX tienen el mismo problema antes de
-  decidir si el filtro debe ser genérico o solo para Colsubsidio.
+  palabras clave como "copa menstrual"/"reutilizable") en `vtex_scraper.py`.
+  **Actualización (2026-09-17): ya se evaluó qué otros retailers VTEX
+  tienen el mismo problema** (al revisar de dónde salían los valores
+  extremos de Índice de Precio en el PDF ejecutivo v1) -- se investigó
+  con el mismo método (productos de competencia más caros por retailer +
+  búsqueda por palabra clave "copa"/"menstrual"/"reutilizable" sobre
+  ~180 productos de competencia combinados) a los 7 retailers restantes
+  con Índice de Precio activo: **Locatel SÍ tiene el mismo problema**
+  (confirmado, mitigado igual que Colsubsidio -- ver estado en
+  "Retailers -- estado actual"); Éxito, Carulla, Farmatodo, La Rebaja,
+  Pasteur y Coopidrogas **no** lo tienen. El filtro real en
+  `vtex_scraper.py` sigue sin implementarse -- ahora que se confirmó en
+  2 de 9 retailers VTEX, debe ser genérico (aplicable a cualquier
+  retailer VTEX), no hardcodeado a uno solo.
 - **PENDIENTE (sin resolver, detectado 2026-09-15): revisar
   `RETAILERS_WITH_UNRELIABLE_BRAND_FIELD` en `insights_engine.py`.**
   Ese set (`{"cafam", "colsubsidio"}`) excluye a ambos retailers de
@@ -228,11 +239,26 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
   confundirla con la regla de arriba -- no es un olvido de desarrollo, no
   hay que "limpiarla" después. Nunca se enlaza desde dashboard.html (esa
   pantalla es client-facing).
+- **Un número raro en el PDF ejecutivo de staging casi siempre es
+  staging, no un bug de código** (recordatorio con evidencia real,
+  2026-09-17): el PDF v1 generado contra `staging` mostraba a Rappi con
+  0.0% de Share of Shelf ("no presente") y valores de Índice de Precio
+  extremos en varios retailers. Se investigó cada síntoma directo contra
+  PRODUCCIÓN (nunca contra staging, ver "REGLA DE ORO" arriba) antes de
+  tocar código: Rappi en producción tiene 12/12 SKUs de marca cliente
+  (100% share) -- el 0% era 100% catálogo de staging, no un bug de
+  detección de marca. `search_configs` en producción solo tiene 3 filas,
+  las 3 con el mismo término "Toallas Higienicas" y activas -- no hay
+  ningún término de prueba contaminando producción (si alguna vez
+  aparece uno, desactivar con `PATCH /configs/{id}/toggle`, nunca
+  borrar). El único síntoma que SÍ resultó ser un bug real, confirmado
+  también contra producción, fue la contaminación de categoría en
+  Locatel (ver "Retailers -- estado actual").
 
 ## Retailers -- estado actual
 
 **Producción (main), confirmados y funcionando:**
-Éxito, Carulla, Farmatodo, La Rebaja, Locatel, Colsubsidio*, Pasteur, Cafam*,
+Éxito, Carulla, Farmatodo, La Rebaja, Locatel*, Colsubsidio*, Pasteur, Cafam*,
 Coopidrogas, Rappi*.
 
 *Cafam: posición, precio, marca y disponibilidad funcionan bien, pero
@@ -289,6 +315,25 @@ forzando `price_index` a None para este retailer
 (`RETAILERS_WITH_UNRELIABLE_PRICE_INDEX` en `analytics.py`) hasta que
 exista un filtro de relevancia de categoría. Detalle completo en
 "Lecciones aprendidas" más abajo (pendiente sin resolver).
+
+*Locatel: **mismo problema que Colsubsidio, confirmado con evidencia
+real (2026-09-17)** al investigar por qué su Índice de Precio salía
+extremo en el PDF ejecutivo -- su buscador VTEX también mezcla copas
+menstruales ("Copa Menstrual UVA Talla B" $99.900, "Copa Menstrual
+LifeCup 1/2" $78.900 c/u) y toallas reutilizables ("Toallas Higiénicas
+Reutilizables LifePad" $79.950) con toallas desechables reales,
+inflando el precio promedio de competencia de $14.517 real (solo
+Stayfree/Kotex) a $29.232 (2x). Mismo diagnóstico y misma mitigación
+que Colsubsidio (`price_index` forzado a None vía
+`RETAILERS_WITH_UNRELIABLE_PRICE_INDEX`). Se investigaron con el mismo
+método Éxito, Carulla, Farmatodo, La Rebaja, Pasteur y Coopidrogas
+(productos de competencia más caros + búsqueda por palabra clave
+"copa"/"menstrual"/"reutilizable" en los ~180 productos de competencia
+combinados de los 6) y **ninguno mostró contaminación** -- confirma que
+el problema es específico de Colsubsidio y Locatel, no genérico de
+VTEX. El filtro de relevancia de categoría pendiente (ver "Lecciones
+aprendidas") debería ser genérico ahora que se confirmó en 2 retailers,
+no hardcodeado a uno solo.
 
 **IMPORTANTE -- `dn_pct`/`dp_pct`/`pct_promoted` de HOY (2026-09-15) están
 temporalmente deprimidos, NO es un bug si se ve así en los próximos días.**
