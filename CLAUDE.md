@@ -322,10 +322,18 @@ dispara `/trigger-now` manualmente para esos dos retailers.
 - Mercadolibre: ya no permite búsquedas sin autenticación OAuth 2.0 (requiere
   registrar app de desarrollador + flujo de login real) -- es un proyecto de
   integración de API, no un scraper.
+- Farmalisto (confirmado 2026-09-17): dominio real `farmalisto.com.co`,
+  plataforma PrestaShop 1.7.4.3 (tema Venedor) -- mismo tipo de plataforma
+  que Cafam -- pero el buscador NO usa el motor nativo de PrestaShop
+  (esa ruta, `/busqueda?s=...`, da error 500) ni una API HTTP simple de
+  terceros: usa Doofinder vía **WebSocket**
+  (`wss://us1-layer.doofinder.com/layer/1/websocket`), confirmado con
+  captura real de DevTools. Requeriría implementar un cliente de
+  WebSocket con un protocolo no documentado -- complejidad similar o
+  mayor a la de Cruz Verde. Pausado por ahora.
 
 **Pendientes de investigar/agregar** (orden de la lista de Daniel):
-FarmaCenter, Farmalisto (sospecha PrestaShop, sitio bloqueó
-el acceso directo), Merqueo, Surtimax, Super Inter, Jumbo, Uno A droguerías,
+FarmaCenter, Merqueo, Surtimax, Super Inter, Jumbo, Uno A droguerías,
 Megatiendas, Tiendas D1, Tiendas Ara (D1 y Ara probablemente sin tienda
 transaccional -- confirmar antes de invertir tiempo), Homecenter (Sodimac),
 Olímpica, Alkosto, Falabella.com.co (tiene integración VTEX para vendedores
