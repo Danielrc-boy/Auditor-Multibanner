@@ -159,6 +159,15 @@ def _resumen_prosa(client_name: str, period: dict, distribution_by_retailer: lis
             "(ver metodología para el detalle de qué retailers quedan excluidos y por qué)."
         )
     frases.append(f"La disponibilidad reportada del cliente es de {disponibilidad}.")
+
+    excluded_skus = period.get("client_price_excluded_skus") or 0
+    excluded_price = period.get("client_price_excluded_avg_price")
+    if excluded_skus and excluded_price is not None:
+        frases.append(
+            f"Precio promedio de TENA (línea de incontinencia, sin competencia comparable "
+            f"en este período): ${excluded_price:,.0f} ({excluded_skus} SKUs) -- excluido del "
+            f"Índice de Precio, ver metodología."
+        )
     return " ".join(frases)
 
 
@@ -213,13 +222,20 @@ def _tabla_indice_precio(por_retailer: list) -> Table:
     'Datos insuficientes' en vez de inventar un valor donde price_index
     es None (Rappi por falta de datos comparables, o cualquier retailer
     forzado a None por price_index_data_quality='partial', ver
-    /methodology)."""
-    table_data = [["Retailer", "Índice de Precio", "Calificación"]]
+    /methodology). price_index ya excluye CLIENT_BRANDS_PRICE_EXCLUDED
+    (TENA, ver client_brands.py) -- la última columna es informativa: el
+    precio promedio de esas marcas excluidas, sin índice porque no
+    tienen competencia comparable capturada."""
+    table_data = [["Retailer", "Índice de Precio", "Calificación", "TENA (informativo)"]]
     for cell in sorted(por_retailer, key=lambda c: c["retailer"]):
+        excluded_skus = cell.get("client_price_excluded_skus") or 0
+        excluded_price = cell.get("client_price_excluded_avg_price")
+        tena_cell = f"${excluded_price:,.0f} ({excluded_skus} SKUs)" if excluded_skus else "Sin SKUs"
         table_data.append([
             cell["retailer"].capitalize(),
             _fmt_index(cell["price_index"]),
             RATING_LABELS.get(cell["price_index_rating"], cell["price_index_rating"]),
+            tena_cell,
         ])
     table = Table(table_data, repeatRows=1)
     table.setStyle(_default_table_style())

@@ -43,9 +43,24 @@ total" ni un Share of Shelf / Índice de Precio / Posición Dominante,
 porque hoy no hay forma confiable de saber cuáles de sus filas son del
 cliente. Quedan en la lista aparte "excluded_cells" del resultado, no en
 silencio.
+
+Segunda limitación conocida (confirmada 2026-09-17), independiente de la
+anterior: TENA (marca cliente) es la línea de incontinencia de Essity,
+sin competencia comparable capturada bajo los términos de búsqueda
+actuales ("Toallas Higienicas" solo trae toallas menstruales de la
+competencia: Kotex, Stayfree, EKONO, etc.) -- promediaba 2.4x-3.6x el
+precio de Nosotras, inflando price_index artificialmente en 6 de 7
+retailers antes de este fix. CLIENT_BRANDS_PRICE_EXCLUDED (importado de
+client_brands.py, única fuente de verdad) excluye a TENA del promedio
+"cliente" que alimenta price_index -- pero SÍ sigue contando como
+cliente para client_skus/share_of_shelf_pct/disponibilidad, porque ahí
+no hay problema de comparabilidad. Su precio promedio se reporta aparte
+en client_price_excluded_avg_price, sin índice.
 """
 from statistics import mean
 from typing import Optional
+
+from app.services.client_brands import CLIENT_BRANDS_PRICE_EXCLUDED
 
 RETAILERS_WITH_UNRELIABLE_BRAND_FIELD = {"cafam", "colsubsidio"}
 
@@ -130,7 +145,23 @@ def _build_cell(retailer: str, search_term: str, rows: list, client_brands: set,
     availability_pct = round(client_available / client_skus * 100, 1) if client_skus else None
     data_quality = "complete" if retailer.lower() in reliable_availability_retailers else "partial"
 
-    client_prices = [p for p in (_effective_price(r) for r in client_rows) if p]
+    # client_avg_price/price_index excluyen CLIENT_BRANDS_PRICE_EXCLUDED
+    # (hoy: TENA) -- confirmado 2026-09-17 que es la línea de
+    # incontinencia de Essity, sin competencia comparable capturada bajo
+    # los términos de búsqueda actuales, y que promediaba 2.4x-3.6x el
+    # precio de Nosotras, inflando price_index artificialmente (ver
+    # evidencia completa en client_brands.py). client_skus/share_of_shelf
+    # arriba SÍ siguen contando estas marcas -- el problema era solo de
+    # comparabilidad de precio, no de presencia.
+    price_excluded_brands = {b.strip().lower() for b in CLIENT_BRANDS_PRICE_EXCLUDED}
+    client_rows_price_comparable = [
+        r for r in client_rows if (r.get("brand") or "").strip().lower() not in price_excluded_brands
+    ]
+    client_rows_price_excluded = [
+        r for r in client_rows if (r.get("brand") or "").strip().lower() in price_excluded_brands
+    ]
+
+    client_prices = [p for p in (_effective_price(r) for r in client_rows_price_comparable) if p]
     comp_prices = [p for p in (_effective_price(r) for r in comp_rows) if p]
     client_avg_price = round(mean(client_prices), 0) if client_prices else None
     comp_avg_price = round(mean(comp_prices), 0) if comp_prices else None
@@ -139,6 +170,10 @@ def _build_cell(retailer: str, search_term: str, rows: list, client_brands: set,
         if client_avg_price and comp_avg_price
         else None
     )
+
+    excluded_prices = [p for p in (_effective_price(r) for r in client_rows_price_excluded) if p]
+    client_price_excluded_avg_price = round(mean(excluded_prices), 0) if excluded_prices else None
+    client_price_excluded_skus = len(client_rows_price_excluded)
 
     client_positions = [r["position"] for r in client_rows if r.get("position") is not None]
     comp_positions = [r["position"] for r in comp_rows if r.get("position") is not None]
@@ -169,6 +204,8 @@ def _build_cell(retailer: str, search_term: str, rows: list, client_brands: set,
         "availability_rating": rate_availability(availability_pct, data_quality),
         "client_avg_price": client_avg_price,
         "competition_avg_price": comp_avg_price,
+        "client_price_excluded_avg_price": client_price_excluded_avg_price,
+        "client_price_excluded_skus": client_price_excluded_skus,
         "price_index": price_index,
         "price_index_rating": rate_price_index(price_index),
         "client_best_position": client_best_position,

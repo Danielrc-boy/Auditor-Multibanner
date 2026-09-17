@@ -11,7 +11,7 @@ from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Query
 from app.database import get_db_connection
-from app.services.client_brands import CLIENT_BRANDS
+from app.services.client_brands import CLIENT_BRANDS, CLIENT_BRANDS_PRICE_EXCLUDED
 from app.services.insights_engine import build_insights, build_retailer_summary
 
 router = APIRouter(tags=["analytics"])
@@ -337,6 +337,18 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
     El "precio efectivo" es discount_price si existe, si no price -- el
     precio que realmente paga el cliente final, igual que en /export y
     /analytics/compare-products (avg_final_price).
+
+    client_avg_price / price_index usan CLIENT_BRANDS_PRICE_EXCLUDED
+    (hoy: TENA) para excluir del promedio "cliente" marcas sin
+    competencia comparable capturada bajo el término de búsqueda actual
+    -- ver evidencia completa en client_brands.py (confirmado 2026-09-17:
+    TENA es la línea de incontinencia de Essity, no toallas menstruales,
+    y promediaba 2.4x-3.6x el precio de Nosotras, inflando price_index
+    artificialmente). client_skus/client_available_skus siguen contando
+    TODO CLIENT_BRANDS (Share of Shelf y Disponibilidad no tienen el
+    problema de comparabilidad de precio). El precio promedio de las
+    marcas excluidas se reporta aparte, informativo, sin índice contra
+    competencia (no hay con qué compararlo).
     """
     sql = f"""
         WITH latest_snapshot AS (
@@ -353,14 +365,23 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
             COUNT(*) FILTER (WHERE brand_lower = ANY(%s)) AS client_skus,
             COUNT(*) FILTER (WHERE brand_lower = ANY(%s) AND is_available) AS client_available_skus,
             AVG(effective_price) FILTER (
-                WHERE brand_lower = ANY(%s) AND effective_price > 0
+                WHERE brand_lower = ANY(%s) AND NOT (brand_lower = ANY(%s)) AND effective_price > 0
             ) AS client_avg_price,
             AVG(effective_price) FILTER (
                 WHERE NOT (brand_lower = ANY(%s)) AND effective_price > 0
-            ) AS competition_avg_price
+            ) AS competition_avg_price,
+            COUNT(*) FILTER (WHERE brand_lower = ANY(%s)) AS client_price_excluded_skus,
+            AVG(effective_price) FILTER (
+                WHERE brand_lower = ANY(%s) AND effective_price > 0
+            ) AS client_price_excluded_avg_price
         FROM latest_snapshot;
     """
-    cur.execute(sql, tuple(params) + (CLIENT_BRANDS, CLIENT_BRANDS, CLIENT_BRANDS, CLIENT_BRANDS))
+    cur.execute(sql, tuple(params) + (
+        CLIENT_BRANDS, CLIENT_BRANDS,
+        CLIENT_BRANDS, CLIENT_BRANDS_PRICE_EXCLUDED,
+        CLIENT_BRANDS,
+        CLIENT_BRANDS_PRICE_EXCLUDED, CLIENT_BRANDS_PRICE_EXCLUDED,
+    ))
     row = cur.fetchone() or {}
 
     total = row.get("total_skus") or 0
@@ -368,6 +389,11 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
     client_available = row.get("client_available_skus") or 0
     client_price = float(row["client_avg_price"]) if row.get("client_avg_price") is not None else None
     competition_price = float(row["competition_avg_price"]) if row.get("competition_avg_price") is not None else None
+    client_price_excluded_skus = row.get("client_price_excluded_skus") or 0
+    client_price_excluded_avg_price = (
+        float(row["client_price_excluded_avg_price"])
+        if row.get("client_price_excluded_avg_price") is not None else None
+    )
 
     # Share of Shelf: None (no 0) si no hay ningún SKU monitoreado en el
     # período -- evita reportar "0% de presencia" cuando en realidad es
@@ -391,6 +417,10 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
         "share_of_shelf_pct": share_of_shelf_pct,
         "price_index": price_index,
         "availability_pct": availability_pct,
+        "client_price_excluded_avg_price": (
+            round(client_price_excluded_avg_price, 0) if client_price_excluded_avg_price is not None else None
+        ),
+        "client_price_excluded_skus": client_price_excluded_skus,
         "raw": {
             "total_skus": total,
             "client_skus": client_total,
@@ -716,6 +746,8 @@ def get_executive_summary(
                 "dn_pct": distribution_metrics["dn_pct"],
                 "dp_pct": distribution_metrics["dp_pct"],
                 "pct_promoted": distribution_metrics["pct_promoted"],
+                "client_price_excluded_avg_price": period_metrics["client_price_excluded_avg_price"],
+                "client_price_excluded_skus": period_metrics["client_price_excluded_skus"],
             },
             "trend": trend_result,
             "coverage_changed": coverage_changed,
@@ -764,7 +796,13 @@ def _build_methodology() -> dict:
                 "Índice de Precio: precio promedio efectivo (con "
                 "descuento si aplica) del cliente / precio promedio "
                 "efectivo de la competencia * 100. 100 = paridad; >100 "
-                "= cliente más caro; <100 = cliente más barato. No "
+                "= cliente más caro; <100 = cliente más barato. El "
+                "promedio 'cliente' excluye "
+                f"{sorted(CLIENT_BRANDS_PRICE_EXCLUDED)} (ver "
+                "'known_data_quality_caveats') -- su precio promedio se "
+                "reporta aparte en client_price_excluded_avg_price, sin "
+                "índice, porque no tiene competencia comparable "
+                "capturada bajo los términos de búsqueda actuales. No "
                 f"confiable para: {sorted(RETAILERS_WITH_UNRELIABLE_PRICE_INDEX)} "
                 "(ver 'known_data_quality_caveats')."
             ),
@@ -822,6 +860,17 @@ def _build_methodology() -> dict:
             "Disponibilidad: solo Farmatodo verifica y guarda stock "
             "agotado de forma confiable -- los demás retailers filtran "
             "productos agotados antes de guardarlos o no lo verifican.",
+            f"{sorted(CLIENT_BRANDS_PRICE_EXCLUDED)[0].upper()}: excluida del "
+            "promedio 'cliente' de price_index (confirmado 2026-09-17) -- es "
+            "la línea de incontinencia de Essity (paquetes de 30-60 "
+            "unidades para 'goteos moderados/abundantes'), no toallas "
+            "higiénicas menstruales, y no tiene competencia comparable "
+            "capturada bajo el término 'Toallas Higienicas'. Promediaba "
+            "2.4x-3.6x el precio de Nosotras en 6 de 7 retailers, inflando "
+            "price_index artificialmente antes de este fix. Sigue contando "
+            "como marca cliente para Share of Shelf, % DN/DP y "
+            "disponibilidad -- el problema era solo de comparabilidad de "
+            "precio.",
         ],
     }
 

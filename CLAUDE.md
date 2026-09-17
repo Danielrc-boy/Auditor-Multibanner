@@ -251,9 +251,45 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
   las 3 con el mismo término "Toallas Higienicas" y activas -- no hay
   ningún término de prueba contaminando producción (si alguna vez
   aparece uno, desactivar con `PATCH /configs/{id}/toggle`, nunca
-  borrar). El único síntoma que SÍ resultó ser un bug real, confirmado
-  también contra producción, fue la contaminación de categoría en
-  Locatel (ver "Retailers -- estado actual").
+  borrar). Dos síntomas SÍ resultaron ser hallazgos reales, confirmados
+  también contra producción: la contaminación de categoría en Locatel
+  (ver "Retailers -- estado actual") y la mezcla de TENA en el promedio
+  de precio del cliente (ver bullet siguiente) -- ambos requirieron
+  seguir investigando con evidencia real en vez de aceptar el primer
+  síntoma o descartarlo de plano.
+- **PENDIENTE resuelto (2026-09-17): TENA inflaba `price_index` en 6 de
+  7 retailers -- no era contaminación de categoría del lado de la
+  competencia (como Colsubsidio/Locatel), sino una marca cliente sin
+  competencia comparable bajo el término activo.** Al revisar por qué
+  TODOS los retailers con Índice de Precio confiable mostraban valores
+  extremos (188.5-227.8) incluso los ya confirmados "limpios" de
+  contaminación (Éxito, Carulla, Farmatodo, La Rebaja, Pasteur,
+  Coopidrogas), se listaron los productos de cliente más caros/baratos
+  en los 2 retailers más extremos (Éxito, Coopidrogas): todos eran
+  genuinamente "toallas higiénicas" comparables del lado de la
+  competencia, pero del lado del CLIENTE, TENA (paquetes de 30-60
+  unidades para "goteos moderados/abundantes" -- terminología de
+  incontinencia, no de menstruación) promediaba 2.4x-3.6x el precio de
+  Nosotras en los 6 retailers donde aparece bajo el término "Toallas
+  Higienicas" (Éxito $47,044 vs $19,836; Coopidrogas $31,000 vs
+  $12,313; Carulla $46,944 vs $20,769; Farmatodo $47,650 vs $20,786;
+  Pasteur $39,237 vs $13,125 -- La Rebaja no tiene TENA capturado ahí).
+  El cliente elegido: separar el índice (`CLIENT_BRANDS_PRICE_EXCLUDED`
+  en `client_brands.py`, hoy `["tena"]`) -- price_index ahora se calcula
+  solo con marcas comparables (Nosotras/Pequeñín/Zewa); el precio
+  promedio de TENA se reporta aparte, informativo, sin índice, vía
+  `client_price_excluded_avg_price`/`client_price_excluded_skus` en
+  `/executive-summary`, `/insights` (por_retailer) y la sección 5 del
+  PDF ejecutivo. TENA SIGUE contando como marca cliente para Share of
+  Shelf, % DN/DP y disponibilidad -- el problema era solo de
+  comparabilidad de precio bajo este término de búsqueda específico, no
+  de presencia. Con Carulla como ejemplo: price_index bajó de 188.5
+  (rojo, generaba alerta "precio_fuera_de_mercado") a 118.0 (amarillo,
+  ahora genera oportunidad "precio_por_encima_del_mercado") -- un
+  cambio real de categoría de severidad, no solo cosmético. Otras
+  opciones consideradas y descartadas por el momento (dejarlo como está;
+  excluir TENA del término de búsqueda en el scraper) -- ver historial
+  de decisión si hace falta revisitarlas.
 
 ## Retailers -- estado actual
 
