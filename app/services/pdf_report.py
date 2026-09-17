@@ -83,7 +83,11 @@ def _pick_highlight_insight(insights: dict) -> Optional[dict]:
         referencia = insight.get("valor_referencia")
         if actual is None or referencia is None:
             return 0.0
-        return abs(actual - referencia)
+        # psycopg2 devuelve columnas numéricas como decimal.Decimal, que no
+        # se puede restar directamente con un float (valor_referencia es un
+        # literal float en insights_engine.py) -- confirmado en staging
+        # (2026-09-17): TypeError real, no teórico.
+        return abs(float(actual) - float(referencia))
 
     for bucket in (insights.get("alertas") or [], insights.get("fortalezas") or []):
         if bucket:
