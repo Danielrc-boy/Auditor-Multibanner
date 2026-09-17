@@ -332,8 +332,29 @@ dispara `/trigger-now` manualmente para esos dos retailers.
   WebSocket con un protocolo no documentado -- complejidad similar o
   mayor a la de Cruz Verde. Pausado por ahora.
 
+**Descartados (investigados, técnicamente viables pero sin relevancia de negocio):**
+- FarmaCenter (confirmado 2026-09-17): la cadena nacional tiene dos sitios
+  distintos, no uno. `farmacenter.com.co` es el sitio institucional real
+  de la cadena (Drupal 9, sin carrito/tienda -- sin ninguna tienda
+  transaccional, ni siquiera enlazada). `farmacentervirtual.com`
+  ("Droguería Farmacenter Virtual MBO") es la tienda transaccional real,
+  pero pertenece a un operador/franquiciado regional, no a la cadena
+  completa -- y expone WordPress + WooCommerce con la **Store API pública
+  y sin autenticación** (`GET /wp-json/wc/store/products?search=<término>`,
+  JSON limpio con name/sku/prices/is_in_stock/categories, sin bloqueo,
+  sin necesidad de ScraperAPI -- el caso técnicamente más simple de
+  todos los que hemos visto). El problema es de catálogo, no técnico:
+  se revisaron las 10 categorías (420 productos únicos) buscando
+  "toalla(s) higiénica(s)", "Nosotras", "Tena", "Kotex", "compresas" --
+  **este catálogo no vende higiene femenina en absoluto**, solo
+  "Toallas Húmedas" (toallitas de bebé, categoría distinta). Se
+  descarta por ahora; si en el futuro se necesita monitorear otras
+  categorías de Essity que si tenga este catálogo (vitaminas,
+  medicamentos, cuidado del bebé), el patrón de WooCommerce Store API
+  queda documentado y listo para reusar sin más investigación.
+
 **Pendientes de investigar/agregar** (orden de la lista de Daniel):
-FarmaCenter, Merqueo, Surtimax, Super Inter, Jumbo, Uno A droguerías,
+Merqueo, Surtimax, Super Inter, Jumbo, Uno A droguerías,
 Megatiendas, Tiendas D1, Tiendas Ara (D1 y Ara probablemente sin tienda
 transaccional -- confirmar antes de invertir tiempo), Homecenter (Sodimac),
 Olímpica, Alkosto, Falabella.com.co (tiene integración VTEX para vendedores
