@@ -18,6 +18,7 @@ import unittest
 
 from app.services.insights_engine import (
     build_insights,
+    build_retailer_summary,
     rate_availability,
     rate_position_dominance,
     rate_price_index,
@@ -141,6 +142,48 @@ class BuildInsightsRealDataTests(unittest.TestCase):
                 self.assertIsNotNone(item["valor_actual"], f"{bucket}/{item['tipo']} sin valor_actual")
                 self.assertTrue(item["mensaje_especifico"].strip())
                 self.assertIn(item["retailer"], item["mensaje_especifico"])
+
+
+class BuildRetailerSummaryRealDataTests(unittest.TestCase):
+    """
+    build_retailer_summary() agregado 2026-09-17 para el reporte PDF
+    ejecutivo -- mismo fixture real que BuildInsightsRealDataTests, pero
+    verificando la agregación por retailer (todos los search_term
+    juntos) en vez de por celda (retailer, search_term). El fixture solo
+    tiene un search_term, así que los números deben coincidir con los ya
+    verificados en build_insights (Carulla 39.6% share / 188.5 índice,
+    Coopidrogas 74.3% share, Cafam excluido).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        rows = _load_fixture_rows()
+        cls.result = build_retailer_summary(rows, CLIENT_BRANDS, RELIABLE_AVAILABILITY_RETAILERS)
+
+    def _find(self, retailer):
+        matches = [c for c in self.result if c["retailer"] == retailer]
+        self.assertEqual(len(matches), 1, f"Se esperaba exactamente un retailer '{retailer}'")
+        return matches[0]
+
+    def test_cafam_excluido_por_brand_no_confiable(self):
+        retailers = {c["retailer"] for c in self.result}
+        self.assertNotIn("Cafam", retailers)
+
+    def test_carulla_coincide_con_build_insights(self):
+        cell = self._find("Carulla")
+        self.assertAlmostEqual(cell["share_of_shelf_pct"], 39.6, delta=0.1)
+        self.assertAlmostEqual(cell["price_index"], 188.5, delta=0.5)
+        self.assertEqual(cell["search_term"], "TODOS")
+
+    def test_coopidrogas_coincide_con_build_insights(self):
+        cell = self._find("Coopidrogas")
+        self.assertAlmostEqual(cell["share_of_shelf_pct"], 74.3, delta=0.1)
+        self.assertEqual(cell["position_rating"], "verde")
+
+    def test_devuelve_un_retailer_por_entrada_ordenado(self):
+        retailers = [c["retailer"] for c in self.result]
+        self.assertEqual(retailers, sorted(retailers))
+        self.assertEqual(len(retailers), len(set(retailers)))
 
 
 if __name__ == "__main__":

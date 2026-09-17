@@ -11,7 +11,7 @@ from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from app.database import get_db_connection
-from app.routers import retailers, configs, results, analytics, scraping, internal
+from app.routers import retailers, configs, results, analytics, scraping, internal, reports
 app = FastAPI()
 origins = [
     "https://auditor-multibanner.vercel.app",
@@ -33,6 +33,7 @@ app.include_router(results.router)
 app.include_router(analytics.router)
 app.include_router(scraping.router)
 app.include_router(internal.router)
+app.include_router(reports.router)
 
 @app.get("/")
 def read_root():

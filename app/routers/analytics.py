@@ -12,7 +12,7 @@ from datetime import datetime
 from fastapi import APIRouter, Query
 from app.database import get_db_connection
 from app.services.client_brands import CLIENT_BRANDS
-from app.services.insights_engine import build_insights
+from app.services.insights_engine import build_insights, build_retailer_summary
 
 router = APIRouter(tags=["analytics"])
 
@@ -830,6 +830,16 @@ def get_insights(
     insights_engine.py) -- ver pendiente documentado en CLAUDE.md sobre
     revisar esa exclusión ahora que su "brand" ya es confiable. No se
     toca aquí a propósito.
+
+    "por_retailer" (agregado 2026-09-17 para el reporte PDF ejecutivo):
+    mismo shape que cada insight individual pero UNO por retailer activo
+    (todos los search_term agregados juntos), vía
+    build_retailer_summary() -- reusa _build_cell() internamente, no
+    duplica lógica. Excluye los mismos retailers que build_insights() por
+    la misma razón, y fuerza price_index a None en
+    RETAILERS_WITH_UNRELIABLE_PRICE_INDEX (mismo criterio que
+    /executive-summary) para no mostrar un número que sabemos
+    contaminado.
     """
     conn = get_db_connection()
     try:
@@ -865,6 +875,13 @@ def get_insights(
             """
             cur.execute(sql, tuple(params))
             rows = [dict(r) for r in cur.fetchall()]
-        return build_insights(rows, CLIENT_BRANDS, RETAILERS_WITH_RELIABLE_AVAILABILITY)
+        result = build_insights(rows, CLIENT_BRANDS, RETAILERS_WITH_RELIABLE_AVAILABILITY)
+        por_retailer = build_retailer_summary(rows, CLIENT_BRANDS, RETAILERS_WITH_RELIABLE_AVAILABILITY)
+        for cell in por_retailer:
+            if cell["retailer"].lower() in RETAILERS_WITH_UNRELIABLE_PRICE_INDEX:
+                cell["price_index"] = None
+                cell["price_index_rating"] = "no_concluyente"
+        result["por_retailer"] = por_retailer
+        return result
     finally:
         conn.close()

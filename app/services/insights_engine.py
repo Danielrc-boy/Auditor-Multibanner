@@ -169,6 +169,39 @@ def _fmt_pct(v: Optional[float]) -> str:
     return f"{v:.1f}%" if v is not None else "N/D"
 
 
+def build_retailer_summary(rows: list, client_brands: set, reliable_availability_retailers: set) -> list:
+    """
+    Igual que build_insights() pero agregado por retailer solamente (todos
+    los search_term juntos), reusando _build_cell() sin duplicar su lógica
+    -- necesario para el reporte PDF ejecutivo (gráficas "por retailer" de
+    Share of Shelf, Índice de Precio y Posición Dominante), que necesita el
+    dato completo de CADA retailer activo, no solo los que dispararon una
+    alerta/oportunidad/fortaleza en build_insights().
+
+    Excluye los mismos retailers que build_insights() por la misma razón
+    (RETAILERS_WITH_UNRELIABLE_BRAND_FIELD) para no mostrar un Share of
+    Shelf o Posición Dominante calculado sobre una clasificación de marca
+    que sabemos que no es confiable.
+
+    Devuelve una lista de dicts (ver _build_cell) ordenada por retailer,
+    uno por retailer (search_term fijo como "TODOS" porque agrupa todos
+    los términos).
+    """
+    client_brands = {b.strip().lower() for b in client_brands}
+    reliable_availability_retailers = {r.strip().lower() for r in reliable_availability_retailers}
+
+    rows_by_retailer: dict = {}
+    for row in rows:
+        if row["retailer"].lower() in RETAILERS_WITH_UNRELIABLE_BRAND_FIELD:
+            continue
+        rows_by_retailer.setdefault(row["retailer"], []).append(row)
+
+    return [
+        _build_cell(retailer, "TODOS", retailer_rows, client_brands, reliable_availability_retailers)
+        for retailer, retailer_rows in sorted(rows_by_retailer.items())
+    ]
+
+
 def build_insights(rows: list, client_brands: set, reliable_availability_retailers: set) -> dict:
     """
     rows: lista de dicts, cada uno el último snapshot de un SKU (mismo
