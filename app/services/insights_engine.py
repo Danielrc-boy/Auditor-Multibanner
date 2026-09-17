@@ -145,6 +145,18 @@ def _build_cell(retailer: str, search_term: str, rows: list, client_brands: set,
     client_best_position = min(client_positions) if client_positions else None
     comp_best_position = min(comp_positions) if comp_positions else None
 
+    # % de posiciones top-3 (agregado 2026-09-17 para la sección de
+    # "círculos proporcionales" del reporte PDF ejecutivo): distinto de
+    # client_best_position (la MEJOR posición individual) -- esto es qué
+    # fracción de TODOS los SKUs del cliente en la celda están en el top
+    # 3, para poder mostrar "dominancia" como una proporción y no un
+    # solo sí/no. None (no 0) si el cliente no tiene ningún SKU en la
+    # celda, mismo criterio que el resto de métricas de este módulo.
+    client_top3_pct = (
+        round(sum(1 for p in client_positions if p <= 3) / len(client_positions) * 100, 1)
+        if client_positions else None
+    )
+
     return {
         "retailer": retailer,
         "search_term": search_term,
@@ -162,6 +174,7 @@ def _build_cell(retailer: str, search_term: str, rows: list, client_brands: set,
         "client_best_position": client_best_position,
         "competition_best_position": comp_best_position,
         "position_rating": rate_position_dominance(client_best_position),
+        "client_top3_pct": client_top3_pct,
     }
 
 

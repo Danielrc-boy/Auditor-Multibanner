@@ -360,6 +360,43 @@ transaccional -- confirmar antes de invertir tiempo), Homecenter (Sodimac),
 Olímpica, Alkosto, Falabella.com.co (tiene integración VTEX para vendedores
 externos del marketplace, pero su catálogo propio no está confirmado).
 
+## PDF ejecutivo (`GET /reports/executive-pdf`)
+
+Reporte descargable de 8 secciones fijas (portada, resumen ejecutivo,
+cita editorial, distribución por retailer, índice de precio por
+retailer, posición dominante por retailer, conclusiones clave,
+metodología) -- `app/services/pdf_report.py` (módulo puro, sin DB/
+FastAPI) + `app/routers/reports.py` (arma los dicts desde
+`/executive-summary`, `/insights`, `/methodology` y llama al generador).
+
+**Librería: reportlab, no fpdf2 ni WeasyPrint** (decisión completa en el
+docstring de `pdf_report.py`). Resumen: WeasyPrint da el mejor resultado
+visual pero depende de librerías de sistema (Pango/Cairo/GDK-Pixbuf) que
+no vienen con `pip install` -- riesgo de build extra en Railway que no
+existe en el resto del backend. fpdf2 es puro Python pero sin sistema de
+flujo de documento (páginas/tablas con salto automático), habría
+significado posicionar todo a mano. reportlab es puro Python (mismo
+perfil de riesgo que el resto de `requirements.txt`) y trae Platypus
+(flujo/paginación) + `reportlab.graphics` (gráficas nativas para la
+etapa 2, sin necesitar matplotlib ni imágenes intermedias).
+
+**Build en dos etapas**: la versión actual (etapa 1) es solo texto y
+tablas con datos reales, sin la paleta de marca ni las gráficas de
+barras/círculos -- para confirmar que las 8 secciones traen los números
+correctos antes de invertir tiempo en diseño visual. La etapa 2 (diseño
+completo: paleta lila/carbón de Vantic, formato horizontal, logo,
+gráficas nativas de reportlab.graphics) empieza por Portada + Resumen
+Ejecutivo para aprobación antes de replicarse al resto.
+
+**PENDIENTE: falta `app/assets/logo_vantic.png`** -- el archivo no
+existe todavía en el repo (confirmado 2026-09-17, `find` sobre todo el
+proyecto no encuentra ningún asset con "logo" ni "vantic" en el nombre).
+`generate_executive_pdf()` ya maneja su ausencia sin reventar (portada
+sin logo, solo texto) -- el router (`LOGO_PATH` en `reports.py`) solo lo
+usa si `os.path.exists()` confirma que está. Cuando se agregue el
+archivo real (versión ya corregida con el nombre "VantiC") no hace falta
+tocar código, solo copiarlo a esa ruta.
+
 ## Estilo de trabajo esperado
 
 - Verificar SIEMPRE antes de afirmar que algo funciona: compilar, correr

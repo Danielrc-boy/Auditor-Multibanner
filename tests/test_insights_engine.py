@@ -180,6 +180,19 @@ class BuildRetailerSummaryRealDataTests(unittest.TestCase):
         self.assertAlmostEqual(cell["share_of_shelf_pct"], 74.3, delta=0.1)
         self.assertEqual(cell["position_rating"], "verde")
 
+    def test_client_top3_pct_carulla_y_coopidrogas(self):
+        # Carulla: 21 SKUs del cliente, ninguno en top 3 (mejor posición
+        # #4 -- ver test_alerta_precio_fuera_de_mercado_en_carulla /
+        # posicion_no_dominante en build_insights).
+        carulla = self._find("Carulla")
+        self.assertAlmostEqual(carulla["client_top3_pct"], 0.0, delta=0.1)
+        # Coopidrogas: 26 SKUs del cliente, 3 en top 3 (11.5%) -- domina
+        # por tener AL MENOS un SKU en top 3 (client_best_position #1),
+        # pero client_top3_pct muestra que es una minoría de su propio
+        # catálogo, no "todo el catálogo está arriba".
+        coopidrogas = self._find("Coopidrogas")
+        self.assertAlmostEqual(coopidrogas["client_top3_pct"], 11.5, delta=0.1)
+
     def test_devuelve_un_retailer_por_entrada_ordenado(self):
         retailers = [c["retailer"] for c in self.result]
         self.assertEqual(retailers, sorted(retailers))

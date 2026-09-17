@@ -1,11 +1,21 @@
 """
-Generador del PDF ejecutivo. v1: solo texto y datos reales (sin diseño
-visual elaborado -- tablas simples en vez de las gráficas de barras/
-círculos que se agregarán en la v2), para probar que el pipeline
-completo (fetch de datos -> reportlab -> bytes de PDF válidos) funciona
-con datos reales antes de invertir tiempo en el diseño final.
+Generador del PDF ejecutivo -- 8 secciones fijas (portada, resumen
+ejecutivo, cita editorial, distribución por retailer, índice de precio
+por retailer, posición dominante por retailer, conclusiones clave,
+metodología), en ese orden.
 
-Decisión de librería (2026-09-17): reportlab, no fpdf2 ni WeasyPrint.
+Build en dos etapas, a propósito:
+  - Etapa 1 (esta versión): solo texto y tablas con datos reales -- sin
+    gráficas de barras/círculos ni paleta de marca -- para confirmar que
+    las 8 secciones traen los números correctos antes de invertir tiempo
+    en el diseño visual.
+  - Etapa 2 (pendiente, requiere aprobación de la etapa 1 primero): las
+    secciones 4/5/6 se reemplazan por HorizontalBarChart/formas Circle de
+    reportlab.graphics con la paleta de marca; portada+resumen llevan el
+    layout horizontal tipo presentación aprobado primero por separado.
+
+Decisión de librería (2026-09-17, documentada también en CLAUDE.md):
+reportlab, no fpdf2 ni WeasyPrint.
   - WeasyPrint (HTML/CSS -> PDF) da el mejor resultado visual y hubiera
     dejado reusar estilos del dashboard, pero depende de librerías de
     sistema (Pango, Cairo, GDK-Pixbuf, libffi) que no vienen con
@@ -22,16 +32,17 @@ Decisión de librería (2026-09-17): reportlab, no fpdf2 ni WeasyPrint.
     de sistema -- mismo perfil de riesgo que el resto de requirements.txt),
     con Platypus (Paragraph/Table/Spacer/PageBreak con flujo y paginación
     automática) para el texto/tablas, y reportlab.graphics (HorizontalBarChart,
-    formas Circle/Drawing) para las gráficas nativas de la v2 sin
+    formas Circle/Drawing) para las gráficas nativas de la etapa 2 sin
     necesitar matplotlib ni generar imágenes intermedias.
 
 Módulo puro (no toca la base de datos ni FastAPI): recibe los mismos
 dicts que ya devuelven /executive-summary, /insights y /methodology
 como parámetros, para poder probarlo con datos capturados reales sin
 levantar el servidor. El router (app/routers/reports.py) solo arma esos
-tres dicts y llama a generate_executive_pdf().
+tres dicts (+ la ruta del logo) y llama a generate_executive_pdf().
 """
 import io
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -40,7 +51,9 @@ from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
+    Image,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -56,13 +69,15 @@ RATING_LABELS = {
     "no_concluyente": "Datos insuficientes",
 }
 
+DATOS_INSUFICIENTES = "Datos insuficientes"
+
 
 def _fmt_pct(v: Optional[float]) -> str:
-    return f"{v:.1f}%" if v is not None else "Datos insuficientes"
+    return f"{v:.1f}%" if v is not None else DATOS_INSUFICIENTES
 
 
 def _fmt_index(v: Optional[float]) -> str:
-    return f"{v:.1f}" if v is not None else "Datos insuficientes"
+    return f"{v:.1f}" if v is not None else DATOS_INSUFICIENTES
 
 
 def _fmt_position(v: Optional[int]) -> str:
@@ -147,12 +162,107 @@ def _resumen_prosa(client_name: str, period: dict, distribution_by_retailer: lis
     return " ".join(frases)
 
 
+def _logo_flowable(logo_path: Optional[str], max_width_cm: float = 6.0) -> Optional[Image]:
+    """
+    Sección 1 (portada): usa app/assets/logo_vantic.png tal cual si el
+    archivo existe -- este módulo no lo genera ni lo modifica. Si no
+    existe (ej. todavía no se agregó al repo), la portada se ve sin logo
+    en vez de reventar -- el pipeline de datos reales no debe depender
+    de un asset gráfico pendiente. Ver nota en CLAUDE.md.
+    """
+    if not logo_path or not os.path.exists(logo_path):
+        return None
+    try:
+        reader = ImageReader(logo_path)
+        width_px, height_px = reader.getSize()
+    except Exception:
+        return None
+    width = max_width_cm * cm
+    height = width * (height_px / width_px)
+    return Image(logo_path, width=width, height=height, hAlign="CENTER")
+
+
+def _tabla_distribucion(by_retailer_dn_dp: list) -> Table:
+    """Sección 4: Share of Shelf cliente vs. competencia, y los dos
+    componentes de los que salen % DN / % DP (presencia binaria y tamaño
+    de catálogo) -- por retailer ACTIVO, incluyendo los que hoy tienen
+    client_skus=0 (Cafam/Colsubsidio, ver CLAUDE.md: depresión temporal
+    de dn_pct/dp_pct, no es un bug de este reporte)."""
+    table_data = [[
+        "Retailer", "Share Cliente", "Share Competencia", "Presente (DN)", "SKUs totales (peso DP)",
+    ]]
+    for row in sorted(by_retailer_dn_dp, key=lambda r: r["retailer_code"]):
+        total = row["total_skus"]
+        client = row["client_skus"]
+        share = round(client / total * 100, 1) if total else None
+        comp_share = round(100 - share, 1) if share is not None else None
+        table_data.append([
+            row["retailer_code"].capitalize(),
+            _fmt_pct(share),
+            _fmt_pct(comp_share),
+            "Sí" if client > 0 else "No",
+            str(total),
+        ])
+    table = Table(table_data, repeatRows=1)
+    table.setStyle(_default_table_style())
+    return table
+
+
+def _tabla_indice_precio(por_retailer: list) -> Table:
+    """Sección 5: Índice de Precio por retailer -- marca explícitamente
+    'Datos insuficientes' en vez de inventar un valor donde price_index
+    es None (Rappi por falta de datos comparables, o cualquier retailer
+    forzado a None por price_index_data_quality='partial', ver
+    /methodology)."""
+    table_data = [["Retailer", "Índice de Precio", "Calificación"]]
+    for cell in sorted(por_retailer, key=lambda c: c["retailer"]):
+        table_data.append([
+            cell["retailer"].capitalize(),
+            _fmt_index(cell["price_index"]),
+            RATING_LABELS.get(cell["price_index_rating"], cell["price_index_rating"]),
+        ])
+    table = Table(table_data, repeatRows=1)
+    table.setStyle(_default_table_style())
+    return table
+
+
+def _tabla_posicion_dominante(por_retailer: list) -> Table:
+    """Sección 6: % de SKUs del cliente en posición top-3 por retailer
+    (client_top3_pct, agregado en insights_engine.py 2026-09-17) -- en
+    la etapa 2 esto se dibuja como círculos proporcionales; en esta
+    versión de texto es la misma cifra en tabla, junto a la mejor
+    posición individual para dar contexto."""
+    table_data = [["Retailer", "% SKUs en Top-3", "Mejor posición", "Calificación"]]
+    for cell in sorted(por_retailer, key=lambda c: c["retailer"]):
+        table_data.append([
+            cell["retailer"].capitalize(),
+            _fmt_pct(cell.get("client_top3_pct")),
+            _fmt_position(cell["client_best_position"]),
+            RATING_LABELS.get(cell["position_rating"], cell["position_rating"]),
+        ])
+    table = Table(table_data, repeatRows=1)
+    table.setStyle(_default_table_style())
+    return table
+
+
+def _default_table_style() -> TableStyle:
+    return TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a6b3c")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f2f2")]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ])
+
+
 def generate_executive_pdf(
     client_name: str,
     period_label: str,
     exec_summary: dict,
     insights: dict,
     methodology: dict,
+    logo_path: Optional[str] = None,
 ) -> bytes:
     styles = _build_styles()
     buffer = io.BytesIO()
@@ -167,7 +277,11 @@ def generate_executive_pdf(
     por_retailer = insights.get("por_retailer", [])
 
     # --- 1. Portada ---
-    story.append(Spacer(1, 4 * cm))
+    logo = _logo_flowable(logo_path)
+    story.append(Spacer(1, 3 * cm if logo else 4 * cm))
+    if logo:
+        story.append(logo)
+        story.append(Spacer(1, 0.8 * cm))
     story.append(Paragraph(client_name, styles["PortadaTitulo"]))
     story.append(Paragraph("Reporte Ejecutivo de Digital Shelf", styles["PortadaSubtitulo"]))
     story.append(Paragraph(period_label, styles["PortadaSubtitulo"]))
@@ -193,44 +307,27 @@ def generate_executive_pdf(
         story.append(Paragraph(
             f'"{highlight["mensaje_especifico"]}"', styles["CitaEditorial"]
         ))
-
     story.append(PageBreak())
 
-    # --- 4/5/6. Tablas por retailer (v1 texto -- se reemplazan por
-    # gráficas de barras/círculos en la v2) ---
-    story.append(Paragraph("Desempeño por Retailer", styles["SeccionTitulo"]))
-    dn_dp_by_code = {r["retailer_code"]: r for r in by_retailer_dn_dp}
-    table_data = [[
-        "Retailer", "Share of Shelf", "Índice de Precio", "Mejor posición cliente",
-        "Presente (DN)", "SKUs promocionados",
-    ]]
-    for cell in por_retailer:
-        dn_row = dn_dp_by_code.get(cell["retailer"].lower(), {})
-        table_data.append([
-            cell["retailer"].capitalize(),
-            _fmt_pct(cell["share_of_shelf_pct"]),
-            _fmt_index(cell["price_index"]),
-            _fmt_position(cell["client_best_position"]),
-            "Sí" if dn_row.get("client_skus", 0) > 0 else "No",
-            str(dn_row.get("client_promoted_skus", "N/D")),
-        ])
-    table = Table(table_data, repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a6b3c")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f2f2")]),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]))
-    story.append(table)
+    # --- 4. Distribución por retailer (Share of Shelf, DN, DP) ---
+    story.append(Paragraph("Distribución por Retailer", styles["SeccionTitulo"]))
+    story.append(_tabla_distribucion(by_retailer_dn_dp))
     story.append(Spacer(1, 0.4 * cm))
     story.append(Paragraph(
         f"% Distribución Numérica (DN): {_fmt_pct(period['dn_pct'])} &nbsp;|&nbsp; "
-        f"% Distribución Ponderada (DP): {_fmt_pct(period['dp_pct'])} &nbsp;|&nbsp; "
-        f"% Promocionado: {_fmt_pct(period['pct_promoted'])}",
+        f"% Distribución Ponderada (DP): {_fmt_pct(period['dp_pct'])}",
         styles["Normal"],
     ))
+    story.append(PageBreak())
+
+    # --- 5. Índice de Precio por retailer ---
+    story.append(Paragraph("Índice de Precio por Retailer", styles["SeccionTitulo"]))
+    story.append(_tabla_indice_precio(por_retailer))
+    story.append(PageBreak())
+
+    # --- 6. Posición dominante por retailer (% top-3) ---
+    story.append(Paragraph("Posición Dominante por Retailer", styles["SeccionTitulo"]))
+    story.append(_tabla_posicion_dominante(por_retailer))
     story.append(PageBreak())
 
     # --- 7. Conclusiones clave ---
