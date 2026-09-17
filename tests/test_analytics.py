@@ -35,6 +35,7 @@ from app.routers.analytics import (
     RETAILERS_WITHOUT_RELIABLE_DISCOUNT,
     _build_methodology,
     _compute_distribution_metrics,
+    _drop_unreliable_price_insights,
     _price_index_data_quality,
 )
 
@@ -170,6 +171,61 @@ class MethodologyTests(unittest.TestCase):
             self.assertIn(retailer, caveats_text)
         for retailer in RETAILERS_WITH_RELIABLE_AVAILABILITY:
             self.assertIn(retailer.capitalize(), " ".join(m["known_data_quality_caveats"]))
+
+
+class DropUnreliablePriceInsightsTests(unittest.TestCase):
+    """
+    Reproduce el bug real confirmado 2026-09-17 en producción: el PDF
+    ejecutivo destacaba como "cita editorial" una alerta de Locatel con
+    price_index=46.0 (contaminado, ver RETAILERS_WITH_UNRELIABLE_PRICE_INDEX)
+    aunque la tabla por_retailer sí lo forzaba a "Datos insuficientes"
+    correctamente. No hay fixture real con filas de Locatel a mano, así
+    que el `result` de entrada aquí es sintético -- pero reproduce
+    exactamente el shape real que build_insights() devuelve (mismas
+    claves: tipo/retailer/metrica/valor_actual/mensaje_especifico) y el
+    síntoma real observado.
+    """
+
+    def _make_result(self):
+        return {
+            "alertas": [
+                {"tipo": "precio_fuera_de_mercado", "retailer": "Locatel", "metrica": "price_index", "valor_actual": 46.0},
+                {"tipo": "precio_fuera_de_mercado", "retailer": "Coopidrogas", "metrica": "price_index", "valor_actual": 133.9},
+                {"tipo": "disponibilidad_critica", "retailer": "Locatel", "metrica": "availability_pct", "valor_actual": 50.0},
+            ],
+            "oportunidades": [
+                {"tipo": "precio_por_encima_del_mercado", "retailer": "Locatel", "metrica": "price_index", "valor_actual": 110.0},
+            ],
+            "fortalezas": [
+                {"tipo": "dominio_share_of_shelf", "retailer": "Locatel", "metrica": "share_of_shelf_pct", "valor_actual": 57.8},
+            ],
+        }
+
+    def test_descarta_insights_de_price_index_para_retailers_no_confiables(self):
+        result = _drop_unreliable_price_insights(self._make_result(), {"colsubsidio", "locatel"})
+        alertas_precio_locatel = [
+            i for i in result["alertas"] if i["retailer"] == "Locatel" and i["metrica"] == "price_index"
+        ]
+        self.assertEqual(alertas_precio_locatel, [])  # la de price_index se descarta
+        self.assertEqual(result["oportunidades"], [])  # la única era de Locatel/price_index
+
+    def test_conserva_insights_de_price_index_para_otros_retailers(self):
+        result = _drop_unreliable_price_insights(self._make_result(), {"colsubsidio", "locatel"})
+        retailers_con_alerta_precio = {
+            i["retailer"] for i in result["alertas"] if i["metrica"] == "price_index"
+        }
+        self.assertEqual(retailers_con_alerta_precio, {"Coopidrogas"})
+
+    def test_conserva_insights_no_relacionados_a_precio_para_retailers_no_confiables(self):
+        # Locatel SÍ debe seguir apareciendo en Disponibilidad/Share of
+        # Shelf -- el problema es solo de price_index, no de todo el
+        # retailer (a diferencia de RETAILERS_WITH_UNRELIABLE_BRAND_FIELD,
+        # que sí excluye todo-o-nada).
+        result = _drop_unreliable_price_insights(self._make_result(), {"colsubsidio", "locatel"})
+        retailers_alertas_restantes = {i["retailer"] for i in result["alertas"]}
+        self.assertIn("Locatel", retailers_alertas_restantes)
+        self.assertEqual(len(result["fortalezas"]), 1)
+        self.assertEqual(result["fortalezas"][0]["retailer"], "Locatel")
 
 
 if __name__ == "__main__":

@@ -590,6 +590,38 @@ def _price_index_data_quality(retailers_present: set) -> str:
     return "complete"
 
 
+def _drop_unreliable_price_insights(result: dict, unreliable_price_index_retailers: set) -> dict:
+    """
+    Bug real encontrado 2026-09-17 (evidencia: el PDF ejecutivo de
+    producción mostraba la cita editorial destacando "Índice de precio
+    del cliente en Locatel... es 46.0", un número contaminado, mientras
+    la tabla por_retailer de /insights SÍ lo forzaba a None
+    correctamente -- ver el bloque justo arriba de donde se llama esta
+    función). Ese forzado a None solo cubría por_retailer;
+    build_insights() calcula price_index por CELDA (retailer,
+    search_term) sin saber nada de RETAILERS_WITH_UNRELIABLE_PRICE_INDEX,
+    así que podía generar alertas/oportunidades/fortalezas de tipo
+    price_index con datos contaminados para cualquier retailer en ese
+    set que no esté también en RETAILERS_WITH_UNRELIABLE_BRAND_FIELD
+    (Colsubsidio sí estaba doblemente cubierto por casualidad -- Locatel
+    no). Se descartan aquí, después de construir el resultado, en vez de
+    pasarle la constante a insights_engine.py (que es un módulo puro sin
+    conocimiento de este criterio específico de analytics.py).
+
+    Función pura (no toca result["por_retailer"], que ya viene corregido
+    por separado) para poder probarla sin necesitar una conexión a DB.
+    """
+    for bucket in ("alertas", "oportunidades", "fortalezas"):
+        result[bucket] = [
+            item for item in result[bucket]
+            if not (
+                item["metrica"] == "price_index"
+                and item["retailer"].lower() in unreliable_price_index_retailers
+            )
+        ]
+    return result
+
+
 def _trend_between(current: dict, previous: dict) -> dict:
     """
     Para cada una de las 3 métricas, compara el valor actual (últimos 7
@@ -952,6 +984,7 @@ def get_insights(
                 cell["price_index"] = None
                 cell["price_index_rating"] = "no_concluyente"
         result["por_retailer"] = por_retailer
-        return result
+
+        return _drop_unreliable_price_insights(result, RETAILERS_WITH_UNRELIABLE_PRICE_INDEX)
     finally:
         conn.close()
