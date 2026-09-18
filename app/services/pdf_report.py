@@ -8,21 +8,30 @@ Build en dos etapas, a propósito:
   - Etapa 1 (superada): solo texto y tablas con datos reales -- sin
     gráficas de barras/círculos ni paleta de marca -- para confirmar que
     las 8 secciones traían los números correctos antes de invertir tiempo
-    en el diseño visual. Secciones 4-8 siguen en este estado (portrait,
-    tabla verde genérica) -- fuera de alcance de este pase.
-  - Etapa 2, portada + resumen (hecho, 2026-09-17): secciones 1-2 en
-    plantillas horizontales tipo presentación (BaseDocTemplate con
-    PageTemplate por sección, ver generate_executive_pdf), paleta de
-    marca Vantic real (muestreada de app/assets/logo_vantic.png, ver
-    COLOR_* arriba) y logo embebido en la portada. La cita editorial
-    (sección 3) se integró como blockquote en la misma página horizontal
-    del resumen en vez de su propio PageBreak, para que la columna
-    izquierda de esa página cuente una sola historia (prosa + cita) junto
-    a la tarjeta de KPIs de la columna derecha.
-  - Etapa 2, resto del documento (pendiente, requiere aprobación del
-    diseño de portada+resumen primero): secciones 4/5/6 se reemplazan por
-    HorizontalBarChart/formas Circle de reportlab.graphics con la misma
-    paleta.
+    en el diseño visual.
+  - Etapa 2, portada + resumen (hecho, aprobado 2026-09-17 contra
+    staging con Preview real -- ver CLAUDE.md, no tocar sin pedirlo):
+    secciones 1-2 en plantillas horizontales tipo presentación
+    (BaseDocTemplate con PageTemplate por sección, ver
+    generate_executive_pdf), paleta de marca Vantic real (muestreada de
+    app/assets/logo_vantic.png, ver COLOR_* arriba) y logo embebido en la
+    portada. La cita editorial (sección 3) se integró como blockquote en
+    la misma página horizontal del resumen.
+  - Etapa 2, sección 4 (hecho, 2026-09-17): tabla de rejilla verde
+    reemplazada por `_RetailerShareBar`, una barra horizontal apilada
+    (Flowable custom dibujado a mano con canvas.roundRect + clipping, no
+    HorizontalBarChart de reportlab.graphics -- se decidió así porque el
+    dato en sí es una proporción de 2 partes que suman 100%, share
+    cliente vs. competencia, y una barra tipo "progress bar" con
+    clipping representa eso de forma más directa y con más control de
+    estilo -- sin bordes duros, esquinas redondeadas, número grande al
+    lado -- que armar la gráfica genérica de reportlab.graphics para
+    este caso). Sin verde institucional en esta sección.
+  - Etapa 2, secciones 5/6 (pendiente, requiere aprobación de la sección
+    4 primero, mismo proceso por partes que portada+resumen): sección 5
+    (Índice de Precio) como el mismo tipo de barra; sección 6 (Posición
+    Dominante) como círculos proporcionales. Siguen en tabla verde de la
+    etapa 1 por ahora, a propósito.
 
 Decisión de librería (2026-09-17, documentada también en CLAUDE.md):
 reportlab, no fpdf2 ni WeasyPrint.
@@ -64,6 +73,7 @@ from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
     BaseDocTemplate,
+    Flowable,
     Frame,
     Image,
     NextPageTemplate,
@@ -188,6 +198,14 @@ def _build_styles():
     ))
     styles.add(ParagraphStyle(
         name="SeccionTitulo", parent=styles["Heading2"], spaceBefore=18, spaceAfter=8,
+    ))
+    styles.add(ParagraphStyle(
+        name="SeccionTituloBrand", parent=styles["Heading2"], fontName="Helvetica-Bold",
+        fontSize=17, leading=21, textColor=COLOR_CHARCOAL, spaceBefore=6, spaceAfter=4,
+    ))
+    styles.add(ParagraphStyle(
+        name="LegendLabel", parent=styles["Normal"], fontName="Helvetica",
+        fontSize=8.5, textColor=COLOR_CHARCOAL_MUTED,
     ))
     return styles
 
@@ -352,30 +370,121 @@ def _kpi_stat_card(period: dict, styles, width: float) -> Table:
     return card
 
 
-def _tabla_distribucion(by_retailer_dn_dp: list) -> Table:
-    """Sección 4: Share of Shelf cliente vs. competencia, y los dos
-    componentes de los que salen % DN / % DP (presencia binaria y tamaño
-    de catálogo) -- por retailer ACTIVO, incluyendo los que hoy tienen
-    client_skus=0 (Cafam/Colsubsidio, ver CLAUDE.md: depresión temporal
-    de dn_pct/dp_pct, no es un bug de este reporte)."""
-    table_data = [[
-        "Retailer", "Share Cliente", "Share Competencia", "Presente (DN)", "SKUs totales (peso DP)",
-    ]]
+class _RetailerShareBar(Flowable):
+    """Fila de la sección 4 (Distribución): barra horizontal tipo
+    'progress bar' -- violeta (cliente) sobre pista lila clara
+    (competencia) -- en vez de una fila de tabla con rejilla verde.
+    Reemplaza a `_tabla_distribucion` (etapa 1, eliminada). Dibujada a
+    mano con canvas.roundRect + clipping en vez de HorizontalBarChart de
+    reportlab.graphics: ver docstring del módulo para la razón.
+
+    `client_share`/`comp_share` en 0-100 o None (sin datos, ej. total de
+    SKUs en 0 -- no debería pasar en datos reales pero no se asume).
+    Reserva `ROW_GAP` pt de espacio en blanco debajo de su propio
+    contenido, así que el llamador solo necesita agregar una instancia
+    por retailer al story, sin Spacers entre sí."""
+
+    ROW_H = 46
+    ROW_GAP = 16
+    BAR_H = 12
+
+    def __init__(self, retailer_label: str, client_share: Optional[float], comp_share: Optional[float],
+                 total_skus: int, presente: bool, width: float):
+        super().__init__()
+        self.retailer_label = retailer_label
+        self.client_share = client_share
+        self.comp_share = comp_share
+        self.total_skus = total_skus
+        self.presente = presente
+        self.width = width
+
+    def wrap(self, availWidth, availHeight):
+        return (self.width, self.ROW_H + self.ROW_GAP)
+
+    def draw(self):
+        c = self.canv
+        w = self.width
+        top = self.ROW_GAP + self.ROW_H
+
+        c.setFont("Helvetica-Bold", 11)
+        c.setFillColor(COLOR_CHARCOAL)
+        c.drawString(0, top - 12, self.retailer_label)
+
+        c.setFont("Helvetica-Bold", 15)
+        c.setFillColor(COLOR_VIOLET if self.client_share is not None else COLOR_CHARCOAL_MUTED)
+        c.drawRightString(w, top - 14, _fmt_pct(self.client_share))
+
+        c.setFont("Helvetica", 8)
+        c.setFillColor(COLOR_CHARCOAL_MUTED)
+        meta = f"{self.total_skus} SKUs totales -- {'presente' if self.presente else 'sin presencia'}"
+        c.drawString(0, top - 24, meta)
+        c.drawRightString(w, top - 24, f"Competencia {_fmt_pct(self.comp_share)}")
+
+        bar_y = self.ROW_GAP
+        radius = self.BAR_H / 2
+        c.setFillColor(COLOR_LILAC_LINE)
+        c.roundRect(0, bar_y, w, self.BAR_H, radius, stroke=0, fill=1)
+        if self.client_share:
+            client_w = w * (self.client_share / 100.0)
+            c.saveState()
+            p = c.beginPath()
+            p.roundRect(0, bar_y, w, self.BAR_H, radius)
+            c.clipPath(p, stroke=0, fill=0)
+            c.setFillColor(COLOR_VIOLET)
+            c.rect(0, bar_y, client_w, self.BAR_H, stroke=0, fill=1)
+            c.restoreState()
+
+
+class _ColorLegend(Flowable):
+    """Leyenda de color (cuadro violeta = Cliente, cuadro lila =
+    Competencia) para la sección 4 -- reemplaza a los encabezados de
+    columna que tenía la tabla de la etapa 1, ahora que las barras no
+    tienen encabezados propios."""
+
+    def __init__(self, width: float, height: float = 14):
+        super().__init__()
+        self.width = width
+        self.height = height
+
+    def wrap(self, availWidth, availHeight):
+        return (self.width, self.height)
+
+    def draw(self):
+        c = self.canv
+        sq = 9
+        y = (self.height - sq) / 2
+        c.setFillColor(COLOR_VIOLET)
+        c.rect(0, y, sq, sq, stroke=0, fill=1)
+        c.setFont("Helvetica", 8.5)
+        c.setFillColor(COLOR_CHARCOAL_MUTED)
+        c.drawString(sq + 5, y + 1, "Cliente")
+        x2 = sq + 5 + c.stringWidth("Cliente", "Helvetica", 8.5) + 16
+        c.setFillColor(COLOR_LILAC_LINE)
+        c.rect(x2, y, sq, sq, stroke=0, fill=1)
+        c.setFillColor(COLOR_CHARCOAL_MUTED)
+        c.drawString(x2 + sq + 5, y + 1, "Competencia")
+
+
+def _retailer_share_rows(by_retailer_dn_dp: list, width: float) -> list:
+    """Arma las filas de barra de la sección 4, una por retailer activo,
+    ordenadas igual que la tabla de la etapa 1 (por retailer_code) --
+    incluye retailers con client_skus=0 (Cafam/Colsubsidio en su momento,
+    ver CLAUDE.md), mostrando 0.0% en vez de ocultar la fila."""
+    rows = []
     for row in sorted(by_retailer_dn_dp, key=lambda r: r["retailer_code"]):
         total = row["total_skus"]
         client = row["client_skus"]
         share = round(client / total * 100, 1) if total else None
         comp_share = round(100 - share, 1) if share is not None else None
-        table_data.append([
-            row["retailer_code"].capitalize(),
-            _fmt_pct(share),
-            _fmt_pct(comp_share),
-            "Sí" if client > 0 else "No",
-            str(total),
-        ])
-    table = Table(table_data, repeatRows=1)
-    table.setStyle(_default_table_style())
-    return table
+        rows.append(_RetailerShareBar(
+            retailer_label=row["retailer_code"].capitalize(),
+            client_share=share,
+            comp_share=comp_share,
+            total_skus=total,
+            presente=client > 0,
+            width=width,
+        ))
+    return rows
 
 
 def _tabla_indice_precio(por_retailer: list) -> Table:
@@ -540,9 +649,12 @@ def generate_executive_pdf(
     story.append(PageBreak())
 
     # --- 4. Distribución por retailer (Share of Shelf, DN, DP) ---
-    story.append(Paragraph("Distribución por Retailer", styles["SeccionTitulo"]))
-    story.append(_tabla_distribucion(by_retailer_dn_dp))
-    story.append(Spacer(1, 0.4 * cm))
+    content_width_normal = PAGE_PORTRAIT[0] - 2 * margin_portrait
+    story.append(Paragraph("Distribución por Retailer", styles["SeccionTituloBrand"]))
+    story.append(_ColorLegend(width=content_width_normal))
+    story.append(Spacer(1, 0.3 * cm))
+    story.extend(_retailer_share_rows(by_retailer_dn_dp, width=content_width_normal))
+    story.append(Spacer(1, 0.2 * cm))
     story.append(Paragraph(
         f"% Distribución Numérica (DN): {_fmt_pct(period['dn_pct'])} &nbsp;|&nbsp; "
         f"% Distribución Ponderada (DP): {_fmt_pct(period['dp_pct'])}",
