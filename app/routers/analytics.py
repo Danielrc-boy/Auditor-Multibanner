@@ -173,7 +173,7 @@ def compare_products(
                 product_name,
                 COALESCE(brand, 'Sin Marca') as brand,
                 COUNT(*) as total_skus,
-                ROUND(AVG(position)::numeric, 1) as avg_position,
+                ROUND(AVG(position)::numeric, 0) as avg_position,
                 ROUND(AVG(price)::numeric, 0) as avg_price,
                 ROUND(AVG(CASE WHEN discount_price > 0 AND discount_price < price THEN discount_price ELSE price END)::numeric, 0) as avg_final_price,
                 COUNT(CASE WHEN is_available = FALSE THEN 1 END) as oos_skus
@@ -200,7 +200,7 @@ def compare_products(
                 "price_diff": price_diff,
                 "price_pct": round(price_pct, 1),
                 "is_b_cheaper": price_diff < 0,
-                "pos_diff": round(pos_diff, 1),
+                "pos_diff": round(pos_diff),
                 "is_b_better_positioned": pos_diff < 0
             }
         }
