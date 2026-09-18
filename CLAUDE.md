@@ -504,22 +504,113 @@ perfil de riesgo que el resto de `requirements.txt`) y trae Platypus
 (flujo/paginación) + `reportlab.graphics` (gráficas nativas para la
 etapa 2, sin necesitar matplotlib ni imágenes intermedias).
 
-**Build en dos etapas**: la versión actual (etapa 1) es solo texto y
-tablas con datos reales, sin la paleta de marca ni las gráficas de
-barras/círculos -- para confirmar que las 8 secciones traen los números
-correctos antes de invertir tiempo en diseño visual. La etapa 2 (diseño
-completo: paleta lila/carbón de Vantic, formato horizontal, logo,
-gráficas nativas de reportlab.graphics) empieza por Portada + Resumen
-Ejecutivo para aprobación antes de replicarse al resto.
+**Build en dos etapas**: la versión etapa 1 (superada) era solo texto y
+tablas con datos reales, sin paleta de marca ni gráficas -- para
+confirmar que las 8 secciones traían los números correctos antes de
+invertir tiempo en diseño visual.
 
-**PENDIENTE: falta `app/assets/logo_vantic.png`** -- el archivo no
-existe todavía en el repo (confirmado 2026-09-17, `find` sobre todo el
-proyecto no encuentra ningún asset con "logo" ni "vantic" en el nombre).
-`generate_executive_pdf()` ya maneja su ausencia sin reventar (portada
-sin logo, solo texto) -- el router (`LOGO_PATH` en `reports.py`) solo lo
-usa si `os.path.exists()` confirma que está. Cuando se agregue el
-archivo real (versión ya corregida con el nombre "VantiC") no hace falta
-tocar código, solo copiarlo a esa ruta.
+**Etapa 2, Portada + Resumen Ejecutivo: hecho (2026-09-17, en
+`staging`)**. `app/assets/logo_vantic.png` ya existe en el repo (el
+usuario lo adjuntó directamente en la conversación, ruta original
+`~/Downloads/LogoVantic.png`) -- el pendiente de "falta el logo" de esta
+misma fecha quedó resuelto, ya no aplica. Paleta de marca (`COLOR_*` en
+`pdf_report.py`) extraída con muestreo real de píxeles del logo (violeta
+oscuro ~`#241640`, violeta medio ~`#5B3876`, lila ~`#8A5FA8`/`#D9C9EC`),
+no inventada a ojo. Secciones 1-2 ahora usan `BaseDocTemplate` con
+`PageTemplate` propio por sección (patrón nuevo en este archivo, no
+existía en etapa 1): portada y resumen en horizontal tipo presentación
+(fondo lila pálido, franja violeta oscuro, logo embebido, motivo de
+círculos decorativo en portada); el resto del documento (secciones 3-8)
+sigue en la plantilla vertical de la etapa 1 sin tocar -- la cita
+editorial (sección 3) se movió a la misma página horizontal del resumen
+como blockquote en vez de tener su propio salto de página, para que la
+columna izquierda cuente una sola historia (prosa + cita) junto a la
+tarjeta violeta de KPIs (Share of Shelf + DN/DP/Disponibilidad) de la
+columna derecha. Verificado primero localmente (no hay `DATABASE_URL`
+en el entorno local) generando el PDF con datos de prueba
+representativos y renderizando páginas a imagen, y LUEGO contra la URL
+real de staging desplegada (`/reports/executive-pdf`, ver "REGLA DE
+ORO" arriba) con datos reales de producción-de-pruebas -- ambos pasos
+hechos antes de considerar el trabajo terminado, ninguno reemplaza al
+otro. Un primer intento de la tarjeta de KPIs tenía las etiquetas
+("SHARE OF SHELF", "DN/DP/Disponib.") en lila oscuro sobre fondo
+violeta -- casi ilegible por poco contraste, corregido usando el lila
+claro (`#D9C9EC`) antes de subir nada.
+
+**Bug real encontrado y corregido contra staging (2026-09-17)**: la
+tabla de KPIs (DN/DP/Disponibilidad) anidada dentro de la tarjeta
+violeta (`_kpi_stat_card` en `pdf_report.py`) se dimensionaba con el
+ancho TOTAL de la tarjeta sin descontar su padding lateral
+(`CARD_SIDE_PADDING`) -- invisible con datos de prueba inventados a
+mano, pero con datos reales de staging (`availability_pct=100.0`) el
+texto "100.0%" se salía físicamente del borde derecho de la tarjeta
+violeta. Solo se detectó porque la verificación contra staging se hizo
+con datos reales, no con el mock local -- confirma la razón de tener
+ambos pasos de verificación, no solo el local. Corregido restando
+`CARD_SIDE_PADDING*2` antes de repartir el ancho entre las 3 columnas;
+re-verificado contra staging con el mismo dato real (100.0%) para
+confirmar.
+
+**Sección 4 (Distribución por Retailer): hecho (2026-09-17, en
+`staging`).** Tabla de rejilla verde reemplazada por una barra
+horizontal apilada (violeta = cliente, sobre pista lila clara =
+competencia) dibujada a mano con `_RetailerShareBar` (canvas.roundRect +
+clipping, no `HorizontalBarChart` de `reportlab.graphics` -- ver
+docstring completo en `pdf_report.py`). Sin verde institucional en esta
+sección: es monocromática violeta a propósito, porque el dato en sí
+(share cliente vs. competencia) no tiene una calificación de estado
+verde/amarillo/rojo por celda.
+
+**Secciones 5/6/7/8 (resto del documento): hecho (2026-09-18, merge
+SELECTIVO a `main` en commit aparte -- ver más abajo).** Sección 5
+(Índice de Precio) como `_PriceIndexBar`, mismo mecanismo de barra a
+mano que la sección 4, con una línea de referencia fija en 100 (paridad)
+y un rombo violeta oscuro marcando `price_index_median` (el dato
+adicional agregado el mismo día, ver "Lecciones aprendidas" más abajo).
+Sección 6 (Posición Dominante) como `_TopThreeCircle`, una dona
+proporcional dibujada con `canvas.wedge` (no `Pie`/`HorizontalBarChart`
+de `reportlab.graphics`, mismo criterio de control de estilo). A
+diferencia de la sección 4, las secciones 5/6 SÍ tienen una calificación
+de estado por celda (`price_index_rating`/`position_rating`), así que
+usan una paleta de semáforo aparte de la violeta de marca
+(`_STATUS_COLORS` en `pdf_report.py`, tonos "-600" de Tailwind) --
+mismo criterio de color que ya usa el dashboard para
+Alertas/Oportunidades/Fortalezas. La sección 7 (Conclusiones) reusa
+exactamente esos mismos 3 colores (`_CATEGORIA_STATUS_KEY`) en cajas con
+barra de color a la izquierda (`_callout_box`, mismo patrón que
+`_cita_blockquote` de la sección 3) en vez de una lista de viñetas
+negras. La sección 8 (Metodología) usa `_note_box` (fondo lila pálido)
+para el disclaimer y traduce las claves snake_case de
+`methodology["metrics"]` a nombres legibles (`METRIC_DISPLAY_NAMES`) --
+la etapa 1 imprimía la clave cruda (ej. "share_of_shelf_pct") como
+encabezado, un detalle que quedó sin pulir hasta ahora.
+
+Verificado primero localmente (PDF generado con el fixture real de
+`tests/fixtures/production_snapshot_2026-09-15.json` y renderizado a
+imagen con pymupdf, dependencia de desarrollo NO agregada a
+`requirements.txt`) -- se encontró y corrigió un bug real antes de subir
+nada: el rombo de `price_index_median` podía quedar pegado al borde
+derecho de la barra (o clippeado) cuando la mediana superaba al
+promedio, porque `scale_max` solo consideraba `price_index` al calcular
+la escala común de la sección -- corregido incluyendo también
+`price_index_median` en ese cálculo (ver `_retailer_price_index_rows`).
+Verificado también contra staging con datos reales antes de dar el
+trabajo por terminado, mismo criterio que portada+resumen.
+
+**Merge selectivo a `main` (2026-09-18)**: el lote de ese día
+(price_index_median, botón de descarga de reportes, y los puntos
+mecánicos 1/2/3/5) se aprobó para producción ANTES de que el rediseño
+visual de las secciones 5-8 estuviera listo -- mergear todo `staging` de
+una habría llevado a producción un PDF a medio diseñar (visible desde el
+botón de descarga recién agregado). Se probó un cherry-pick selectivo en
+una rama descartable primero (los commits del lote SÍ tocaban
+`pdf_report.py`, mismo archivo que el rediseño, así que no era obvio que
+fuera a aplicar limpio): aplicó sin conflictos porque los cambios de ese
+lote solo tocaban funciones (`_resumen_prosa`, `_tabla_indice_precio`)
+que ya existían tal cual en la versión de `main` -- el rediseño de
+secciones 5/6 (que sí las reemplazaba) todavía no estaba en el historial
+en ese momento. Confirmar esto con una rama de prueba ANTES de tocar
+`main` real evitó tener que revertir nada.
 
 ## Estilo de trabajo esperado
 
