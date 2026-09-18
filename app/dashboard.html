@@ -256,6 +256,7 @@
                             <th class="p-3">Marca</th>
                             <th class="p-3">Precio Lista</th>
                             <th class="p-3">Precio Final</th>
+                            <th class="p-3">% Desc.</th>
                             <th class="p-3">Permanencia</th>
                             <th class="p-3">Estado</th>
                         </tr>
@@ -534,11 +535,14 @@
 
                 const tbody = document.getElementById('positionsTableBody');
                 if (!rows.length) {
-                    tbody.innerHTML = `<tr><td colspan="8" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="9" class="p-4 text-center text-slate-500">No se encontraron productos.</td></tr>`;
                     return;
                 }
 
-                tbody.innerHTML = rows.map(r => `
+                tbody.innerHTML = rows.map(r => {
+                    const hasDiscount = r.discount_price && r.discount_price > 0 && r.discount_price < r.price;
+                    const discountPct = hasDiscount ? ((r.price - r.discount_price) / r.price * 100) : null;
+                    return `
                     <tr class="hover:bg-slate-800/30 transition">
                         <td class="p-3 font-bold ${r.position <= 10 ? 'text-indigo-400' : 'text-slate-400'}">#${r.position}</td>
                         <td class="p-3"><span class="px-2 py-0.5 bg-slate-800 border border-slate-700 rounded text-[10px]">${r.retailer}</span></td>
@@ -546,6 +550,7 @@
                         <td class="p-3 text-slate-400">${r.brand}</td>
                         <td class="p-3 font-mono">$${Number(r.price).toLocaleString()}</td>
                         <td class="p-3 font-mono text-emerald-400 font-semibold">$${Number(r.discount_price && r.discount_price > 0 ? r.discount_price : r.price).toLocaleString()}</td>
+                        <td class="p-3 font-mono ${hasDiscount ? 'text-amber-400 font-semibold' : 'text-slate-600'}">${hasDiscount ? '-' + discountPct.toFixed(1) + '%' : '--'}</td>
                         <td class="p-3">
                             <span class="px-2 py-0.5 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded text-[10px] font-mono">
                                 ${r.run_count || 1} corrida(s) sin cambios
@@ -558,7 +563,8 @@
                             }
                         </td>
                     </tr>
-                `).join('');
+                `;
+                }).join('');
             } catch (err) {
                 console.error("Error cargando tabla:", err);
             }
@@ -665,10 +671,111 @@
             }
         }
 
+        // Envuelve un <select> nativo con un combobox buscable (input + lista
+        // filtrable). El <select> original se conserva oculto en el DOM para
+        // que el resto del código (populateSelect, .value, listeners onchange)
+        // siga funcionando sin cambios -- este wrapper solo controla su UI.
+        function initSearchableSelect(selectId) {
+            const select = document.getElementById(selectId);
+            if (!select || select.dataset.searchableInit) return;
+            select.dataset.searchableInit = 'true';
+
+            const originalClass = select.className;
+            select.classList.add('hidden');
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'relative';
+            select.parentNode.insertBefore(wrapper, select);
+            wrapper.appendChild(select);
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = originalClass + ' flex items-center justify-between gap-2 cursor-pointer';
+            btn.innerHTML = `<span class="truncate"></span><i class="fa-solid fa-chevron-down text-[9px] text-slate-500"></i>`;
+            wrapper.appendChild(btn);
+
+            const panel = document.createElement('div');
+            panel.className = 'hidden absolute z-50 mt-1 w-full min-w-[220px] bg-slate-900 border border-slate-700 rounded-lg shadow-xl overflow-hidden';
+            panel.innerHTML = `
+                <div class="p-2 border-b border-slate-700">
+                    <input type="text" placeholder="Buscar..." class="w-full bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded px-2 py-1.5 focus:outline-none focus:border-indigo-500">
+                </div>
+                <ul class="max-h-56 overflow-y-auto text-xs"></ul>
+            `;
+            wrapper.appendChild(panel);
+
+            const searchInput = panel.querySelector('input');
+            const list = panel.querySelector('ul');
+            const labelSpan = btn.querySelector('span');
+
+            function syncLabel() {
+                const selectedOpt = select.options[select.selectedIndex];
+                labelSpan.textContent = selectedOpt ? selectedOpt.textContent : '';
+            }
+
+            function renderList(filter) {
+                const q = (filter || '').trim().toLowerCase();
+                list.innerHTML = '';
+                Array.from(select.options).forEach(opt => {
+                    if (q && !opt.textContent.toLowerCase().includes(q)) return;
+                    const li = document.createElement('li');
+                    li.textContent = opt.textContent;
+                    li.className = 'px-3 py-1.5 hover:bg-indigo-600/20 cursor-pointer text-slate-200'
+                        + (opt.value === select.value ? ' bg-indigo-600/10 text-indigo-300 font-semibold' : '');
+                    li.addEventListener('click', () => {
+                        select.value = opt.value;
+                        select.dispatchEvent(new Event('change'));
+                        syncLabel();
+                        closePanel();
+                    });
+                    list.appendChild(li);
+                });
+                if (!list.children.length) {
+                    const empty = document.createElement('li');
+                    empty.className = 'px-3 py-2 text-slate-500 italic';
+                    empty.textContent = 'Sin resultados';
+                    list.appendChild(empty);
+                }
+            }
+
+            function openPanel() {
+                document.querySelectorAll('.searchable-select-panel:not(.hidden)').forEach(p => p.classList.add('hidden'));
+                searchInput.value = '';
+                renderList('');
+                panel.classList.remove('hidden');
+                searchInput.focus();
+            }
+            function closePanel() {
+                panel.classList.add('hidden');
+            }
+            panel.classList.add('searchable-select-panel');
+
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                panel.classList.contains('hidden') ? openPanel() : closePanel();
+            });
+            searchInput.addEventListener('input', () => renderList(searchInput.value));
+            searchInput.addEventListener('click', (e) => e.stopPropagation());
+            document.addEventListener('click', (e) => {
+                if (!wrapper.contains(e.target)) closePanel();
+            });
+
+            // Las opciones se cargan de forma asíncrona (populateSelect,
+            // loadFilterOptions) después de este init -- re-sincroniza la
+            // etiqueta visible cada vez que el <select> oculto cambia.
+            new MutationObserver(syncLabel).observe(select, { childList: true });
+            select.addEventListener('change', syncLabel);
+
+            syncLabel();
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('clientBadge').innerText = ACTIVE_CLIENT_NAME;
             loadDashboardData();
             loadFilterOptions();
+
+            ['filterRetailer', 'filterTerm', 'selectBrand', 'selectProduct', 'compareProdA', 'compareProdB']
+                .forEach(initSearchableSelect);
         });
     </script>
 </body>

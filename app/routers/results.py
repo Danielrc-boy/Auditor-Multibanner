@@ -32,13 +32,17 @@ def get_results(
     conn = get_db_connection()
     cursor = conn.cursor()
     query = """
-        SELECT 
-            id, retailer, search_term, product_name, 
-            COALESCE(brand, 'Sin Marca') AS brand, 
-            position, price, discount_price, is_available,
+        SELECT
+            id, retailer, search_term, product_name,
+            COALESCE(brand, 'Sin Marca') AS brand,
+            position, price, discount_price,
+            CASE WHEN discount_price > 0 AND discount_price < price
+                 THEN ROUND(((price - discount_price) / price * 100)::numeric, 1)
+            END AS discount_pct,
+            is_available,
             COALESCE(seller_name, retailer) AS seller_name,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
-        FROM scraper_results 
+        FROM scraper_results
         WHERE 1=1
     """
     params = []
@@ -74,10 +78,14 @@ def export_results(
     conn = get_db_connection()
     cursor = conn.cursor()
     query_tendencia = """
-        SELECT 
-            id, retailer, search_term, product_name, 
-            COALESCE(brand, 'Sin Marca') AS brand, 
-            position, price, discount_price, is_available,
+        SELECT
+            id, retailer, search_term, product_name,
+            COALESCE(brand, 'Sin Marca') AS brand,
+            position, price, discount_price,
+            CASE WHEN discount_price > 0 AND discount_price < price
+                 THEN ROUND(((price - discount_price) / price * 100)::numeric, 1)
+            END AS discount_pct,
+            is_available,
             COALESCE(seller_name, retailer) AS seller_name,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results WHERE 1=1
@@ -105,9 +113,13 @@ def export_results(
 
     query_resumen = """
         SELECT DISTINCT ON (retailer, search_term, product_name)
-            id, retailer, search_term, product_name, 
-            COALESCE(brand, 'Sin Marca') AS brand, 
-            position, price, discount_price, is_available,
+            id, retailer, search_term, product_name,
+            COALESCE(brand, 'Sin Marca') AS brand,
+            position, price, discount_price,
+            CASE WHEN discount_price > 0 AND discount_price < price
+                 THEN ROUND(((price - discount_price) / price * 100)::numeric, 1)
+            END AS discount_pct,
+            is_available,
             COALESCE(seller_name, retailer) AS seller_name,
             (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') AS captured_at
         FROM scraper_results
