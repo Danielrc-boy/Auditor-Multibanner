@@ -182,6 +182,24 @@ def _fmt_position(v: Optional[int]) -> str:
     return f"#{v}" if v is not None else "N/D"
 
 
+def _as_float(v) -> Optional[float]:
+    """Convierte a float nativo de forma segura, o None si v es None.
+
+    psycopg2 devuelve columnas numéricas (price, discount_price, y por
+    lo tanto todo lo derivado de ellas: price_index, price_index_median,
+    client_top3_pct si alguna vez se derivara de un numeric) como
+    decimal.Decimal -- comparar un Decimal con un float (`<`, `min`,
+    `max`) funciona bien, pero OPERAR uno con otro (`/`, `*`) lanza
+    TypeError real (ya documentado una vez en este mismo módulo, ver
+    _pick_highlight_insight._gap -- y confirmado de nuevo en staging
+    2026-09-18 al agregar las barras/donas de las secciones 5/6, que sí
+    dividen y multiplican estos valores, algo que las tablas de texto de
+    la etapa 1 nunca hacían). Se castea en el punto donde los datos
+    entran a este módulo (_retailer_price_index_rows/_retailer_top3_rows)
+    en vez de en cada operación aritmética individual."""
+    return float(v) if v is not None else None
+
+
 def _pick_highlight_insight(insights: dict) -> Optional[dict]:
     """
     Elige el insight de mayor impacto para la 'cita editorial' (sección
@@ -752,8 +770,8 @@ def _retailer_price_index_rows(por_retailer: list, width: float) -> list:
     fuera de la pista) cada vez que la mediana superara al promedio --
     confirmado visualmente con este mismo fixture antes de este ajuste."""
     cells = sorted(por_retailer, key=lambda c: c["retailer"])
-    real_values = [c["price_index"] for c in cells if c.get("price_index") is not None]
-    real_values += [c["price_index_median"] for c in cells if c.get("price_index_median") is not None]
+    real_values = [_as_float(c["price_index"]) for c in cells if c.get("price_index") is not None]
+    real_values += [_as_float(c["price_index_median"]) for c in cells if c.get("price_index_median") is not None]
     scale_max = max(150.0, 50.0 * (int(max(real_values, default=100) // 50) + 1)) if real_values else 150.0
 
     rows = []
@@ -765,8 +783,8 @@ def _retailer_price_index_rows(por_retailer: list, width: float) -> list:
         )
         rows.append(_PriceIndexBar(
             retailer_label=cell["retailer"].capitalize(),
-            price_index=cell.get("price_index"),
-            price_index_median=cell.get("price_index_median"),
+            price_index=_as_float(cell.get("price_index")),
+            price_index_median=_as_float(cell.get("price_index_median")),
             rating=cell.get("price_index_rating", "no_concluyente"),
             tena_label=tena_label,
             scale_max=scale_max,
@@ -850,7 +868,7 @@ def _retailer_top3_rows(por_retailer: list, width: float) -> list:
     for cell in sorted(por_retailer, key=lambda c: c["retailer"]):
         rows.append(_TopThreeCircle(
             retailer_label=cell["retailer"].capitalize(),
-            top3_pct=cell.get("client_top3_pct"),
+            top3_pct=_as_float(cell.get("client_top3_pct")),
             client_best_position=cell.get("client_best_position"),
             competition_best_position=cell.get("competition_best_position"),
             rating=cell.get("position_rating", "no_concluyente"),

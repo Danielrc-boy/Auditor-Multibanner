@@ -164,6 +164,51 @@ class GenerateExecutivePdfRealDataTests(unittest.TestCase):
         )
         self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
 
+    def test_no_revienta_con_decimal_de_psycopg2(self):
+        # Bug real encontrado contra staging (2026-09-18), no teórico:
+        # psycopg2 devuelve columnas numéricas como decimal.Decimal, no
+        # float nativo -- las barras/donas nuevas de las secciones 5/6
+        # (_PriceIndexBar, _TopThreeCircle) SÍ hacen aritmética sobre
+        # price_index/price_index_median/client_top3_pct (dividen entre
+        # scale_max, multiplican por 360°) para dibujarse, algo que las
+        # tablas de texto de la etapa 1 nunca hacían (solo formateaban
+        # con f"{v:.1f}", que sí acepta Decimal sin problema) -- por eso
+        # el fixture real (que solo trae price/discount_price ya
+        # procesados por insights_engine.py con valores que terminaron
+        # siendo float) no lo detectó, y sí reventó en producción-de-
+        # pruebas real con GET /reports/executive-pdf (500 Internal
+        # Server Error, TypeError: unsupported operand type(s) for /:
+        # 'decimal.Decimal' and 'float', confirmado con traceback local
+        # reproduciendo el mismo dict con Decimal a mano). Corregido con
+        # _as_float() en _retailer_price_index_rows/_retailer_top3_rows.
+        # Este test simula exactamente ese shape (Decimal en vez de
+        # float) para que el bug no pueda volver en silencio.
+        from decimal import Decimal
+        por_retailer_decimal = [{
+            "retailer": "Carulla",
+            "price_index": Decimal("118.0"),
+            "price_index_median": Decimal("150.0"),
+            "price_index_rating": "amarillo",
+            "client_price_excluded_skus": 8,
+            "client_price_excluded_avg_price": Decimal("45025.0"),
+            "client_top3_pct": Decimal("39.6"),
+            "client_best_position": 4,
+            "competition_best_position": 1,
+            "position_rating": "amarillo",
+        }]
+        insights_decimal = {
+            "alertas": [], "oportunidades": [], "fortalezas": [],
+            "por_retailer": por_retailer_decimal,
+        }
+        pdf_bytes = generate_executive_pdf(
+            client_name="Essity",
+            period_label="Histórico completo",
+            exec_summary=self.exec_summary,
+            insights=insights_decimal,
+            methodology=self.methodology,
+        )
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+
 
 if __name__ == "__main__":
     unittest.main()
