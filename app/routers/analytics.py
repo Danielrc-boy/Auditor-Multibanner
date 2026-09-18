@@ -370,6 +370,12 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
             AVG(effective_price) FILTER (
                 WHERE NOT (brand_lower = ANY(%s)) AND effective_price > 0
             ) AS competition_avg_price,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY effective_price) FILTER (
+                WHERE brand_lower = ANY(%s) AND NOT (brand_lower = ANY(%s)) AND effective_price > 0
+            ) AS client_median_price,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY effective_price) FILTER (
+                WHERE NOT (brand_lower = ANY(%s)) AND effective_price > 0
+            ) AS competition_median_price,
             COUNT(*) FILTER (WHERE brand_lower = ANY(%s)) AS client_price_excluded_skus,
             AVG(effective_price) FILTER (
                 WHERE brand_lower = ANY(%s) AND effective_price > 0
@@ -378,6 +384,8 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
     """
     cur.execute(sql, tuple(params) + (
         CLIENT_BRANDS, CLIENT_BRANDS,
+        CLIENT_BRANDS, CLIENT_BRANDS_PRICE_EXCLUDED,
+        CLIENT_BRANDS,
         CLIENT_BRANDS, CLIENT_BRANDS_PRICE_EXCLUDED,
         CLIENT_BRANDS,
         CLIENT_BRANDS_PRICE_EXCLUDED, CLIENT_BRANDS_PRICE_EXCLUDED,
@@ -389,6 +397,10 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
     client_available = row.get("client_available_skus") or 0
     client_price = float(row["client_avg_price"]) if row.get("client_avg_price") is not None else None
     competition_price = float(row["competition_avg_price"]) if row.get("competition_avg_price") is not None else None
+    client_median_price = float(row["client_median_price"]) if row.get("client_median_price") is not None else None
+    competition_median_price = (
+        float(row["competition_median_price"]) if row.get("competition_median_price") is not None else None
+    )
     client_price_excluded_skus = row.get("client_price_excluded_skus") or 0
     client_price_excluded_avg_price = (
         float(row["client_price_excluded_avg_price"])
@@ -413,9 +425,24 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
     else:
         price_index = None
 
+    # price_index_median: mismo cálculo que price_index con la mediana en
+    # vez del promedio -- dato ADICIONAL, no reemplaza al promedio. Ver
+    # la nota completa (con evidencia real e investigación de moda) junto
+    # a price_index_median en insights_engine._build_cell, y el resumen
+    # en CLAUDE.md.
+    if (
+        client_median_price is not None
+        and competition_median_price is not None
+        and competition_median_price > 0
+    ):
+        price_index_median = round((client_median_price / competition_median_price) * 100, 1)
+    else:
+        price_index_median = None
+
     return {
         "share_of_shelf_pct": share_of_shelf_pct,
         "price_index": price_index,
+        "price_index_median": price_index_median,
         "availability_pct": availability_pct,
         "client_price_excluded_avg_price": (
             round(client_price_excluded_avg_price, 0) if client_price_excluded_avg_price is not None else None
@@ -427,6 +454,8 @@ def _fetch_summary_metrics(cur, where_sql: str, params: list) -> dict:
             "client_available_skus": client_available,
             "client_avg_price": client_price,
             "competition_avg_price": competition_price,
+            "client_median_price": client_median_price,
+            "competition_median_price": competition_median_price,
         },
     }
 
@@ -708,6 +737,7 @@ def get_executive_summary(
             price_index_data_quality = _price_index_data_quality(period_retailers)
             if price_index_data_quality == "partial":
                 period_metrics["price_index"] = None
+                period_metrics["price_index_median"] = None
 
             current_where = common_where + """
                 AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date
@@ -717,6 +747,7 @@ def get_executive_summary(
             current_retailers = _distinct_retailers(cur, current_where, list(common_params))
             if _price_index_data_quality(current_retailers) == "partial":
                 current_metrics["price_index"] = None
+                current_metrics["price_index_median"] = None
 
             previous_where = common_where + """
                 AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date
@@ -728,6 +759,7 @@ def get_executive_summary(
             previous_retailers = _distinct_retailers(cur, previous_where, list(common_params))
             if _price_index_data_quality(previous_retailers) == "partial":
                 previous_metrics["price_index"] = None
+                previous_metrics["price_index_median"] = None
 
             # % DN / % DP son medidas CROSS-retailer por definición (de
             # cuántos retailers activos tiene presencia el cliente) --
@@ -772,6 +804,7 @@ def get_executive_summary(
             "period": {
                 "share_of_shelf_pct": period_metrics["share_of_shelf_pct"],
                 "price_index": period_metrics["price_index"],
+                "price_index_median": period_metrics["price_index_median"],
                 "availability_pct": period_metrics["availability_pct"],
                 "availability_data_quality": availability_data_quality,
                 "price_index_data_quality": price_index_data_quality,
@@ -983,6 +1016,7 @@ def get_insights(
             if cell["retailer"].lower() in RETAILERS_WITH_UNRELIABLE_PRICE_INDEX:
                 cell["price_index"] = None
                 cell["price_index_rating"] = "no_concluyente"
+                cell["price_index_median"] = None
         result["por_retailer"] = por_retailer
 
         return _drop_unreliable_price_insights(result, RETAILERS_WITH_UNRELIABLE_PRICE_INDEX)

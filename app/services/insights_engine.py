@@ -57,7 +57,7 @@ cliente para client_skus/share_of_shelf_pct/disponibilidad, porque ahí
 no hay problema de comparabilidad. Su precio promedio se reporta aparte
 en client_price_excluded_avg_price, sin índice.
 """
-from statistics import mean
+from statistics import mean, median
 from typing import Optional
 
 from app.services.client_brands import CLIENT_BRANDS_PRICE_EXCLUDED
@@ -171,6 +171,30 @@ def _build_cell(retailer: str, search_term: str, rows: list, client_brands: set,
         else None
     )
 
+    # price_index_median (agregado 2026-09-18): mismo cálculo que
+    # price_index pero con la mediana en vez del promedio -- NO lo
+    # reemplaza, se reporta aparte. Investigado con datos reales de
+    # producción (4 retailers, último snapshot por SKU): coinciden casi
+    # exactamente cuando la dispersión de precios de competencia es
+    # pareja (Éxito: 144.8 promedio vs. 145.8 mediana), pero difieren
+    # bastante cuando hay alta dispersión por tamaños de empaque
+    # (Carulla: 118.0 vs. 150.0 -- la mediana es menos sensible a los
+    # paquetes grandes/premium que jalan el promedio hacia arriba). La
+    # moda se investigó y se descartó: en los 4 retailers, el precio
+    # "más repetido" resultó venir de 1-2 productos individuales
+    # re-capturados en corridas sucesivas, no de varios productos
+    # distintos convergiendo en un mismo precio -- no es una señal de
+    # mercado real. Ver CLAUDE.md para el detalle completo de la
+    # investigación y la decisión de mantener ambas métricas (promedio y
+    # mediana) mientras se acumula más volumen de datos por retailer.
+    client_median_price = round(median(client_prices), 0) if client_prices else None
+    comp_median_price = round(median(comp_prices), 0) if comp_prices else None
+    price_index_median = (
+        round(client_median_price / comp_median_price * 100, 1)
+        if client_median_price and comp_median_price
+        else None
+    )
+
     excluded_prices = [p for p in (_effective_price(r) for r in client_rows_price_excluded) if p]
     client_price_excluded_avg_price = round(mean(excluded_prices), 0) if excluded_prices else None
     client_price_excluded_skus = len(client_rows_price_excluded)
@@ -208,6 +232,9 @@ def _build_cell(retailer: str, search_term: str, rows: list, client_brands: set,
         "client_price_excluded_skus": client_price_excluded_skus,
         "price_index": price_index,
         "price_index_rating": rate_price_index(price_index),
+        "client_median_price": client_median_price,
+        "competition_median_price": comp_median_price,
+        "price_index_median": price_index_median,
         "client_best_position": client_best_position,
         "competition_best_position": comp_best_position,
         "position_rating": rate_position_dominance(client_best_position),

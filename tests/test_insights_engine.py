@@ -218,6 +218,22 @@ class BuildRetailerSummaryRealDataTests(unittest.TestCase):
         self.assertEqual(coopidrogas["client_price_excluded_skus"], 11)
         self.assertAlmostEqual(coopidrogas["client_price_excluded_avg_price"], 31000.0, delta=1.0)
 
+    def test_price_index_median_es_adicional_no_reemplaza_al_promedio(self):
+        # price_index_median (agregado 2026-09-18 -- ver la nota completa
+        # con la investigación real de producción junto a su cálculo en
+        # _build_cell): mismo dataset real que ya confirma price_index
+        # (mean) = 118.0 para Carulla -- la mediana da 150.0, un valor
+        # bien distinto porque la competencia de Carulla en este fixture
+        # tiene alta dispersión de precios por tamaño de empaque. Ambos
+        # deben convivir en la respuesta, ninguno reemplaza al otro.
+        carulla = self._find("Carulla")
+        self.assertAlmostEqual(carulla["price_index"], 118.0, delta=0.5)
+        self.assertAlmostEqual(carulla["price_index_median"], 150.0, delta=0.5)
+
+        coopidrogas = self._find("Coopidrogas")
+        self.assertAlmostEqual(coopidrogas["price_index"], 133.9, delta=0.5)
+        self.assertAlmostEqual(coopidrogas["price_index_median"], 143.8, delta=0.5)
+
     def test_client_top3_pct_carulla_y_coopidrogas(self):
         # Carulla: 21 SKUs del cliente, ninguno en top 3 (mejor posición
         # #4 -- ver test_alerta_precio_fuera_de_mercado_en_carulla /

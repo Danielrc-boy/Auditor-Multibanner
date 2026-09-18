@@ -226,6 +226,13 @@ def _resumen_prosa(client_name: str, period: dict, distribution_by_retailer: lis
         frases.append(
             f"El Índice de Precio consolidado es {price_idx:.1f} -- {direccion} que la competencia."
         )
+        price_idx_median = period.get("price_index_median")
+        if price_idx_median is not None:
+            frases.append(
+                f"Calculado con la mediana (menos sensible a paquetes grandes/atípicos que el "
+                f"promedio) es {price_idx_median:.1f} -- dato adicional, no reemplaza al índice "
+                f"oficial (ver metodología)."
+            )
     else:
         frases.append(
             "El Índice de Precio consolidado no se pudo calcular de forma confiable en este período "
@@ -493,10 +500,20 @@ def _tabla_indice_precio(por_retailer: list) -> Table:
     es None (Rappi por falta de datos comparables, o cualquier retailer
     forzado a None por price_index_data_quality='partial', ver
     /methodology). price_index ya excluye CLIENT_BRANDS_PRICE_EXCLUDED
-    (TENA, ver client_brands.py) -- la última columna es informativa: el
-    precio promedio de esas marcas excluidas, sin índice porque no
-    tienen competencia comparable capturada."""
-    table_data = [["Retailer", "Índice de Precio", "Calificación", "TENA (informativo)"]]
+    (TENA, ver client_brands.py) -- la penúltima columna es informativa:
+    el precio promedio de esas marcas excluidas, sin índice porque no
+    tienen competencia comparable capturada.
+
+    Columna "Mediana" (agregada 2026-09-18, ver price_index_median en
+    insights_engine.py): mismo índice pero calculado con la mediana en
+    vez del promedio -- dato ADICIONAL junto al índice oficial (columna
+    "Índice de Precio"), no lo reemplaza. Investigado con datos reales
+    de producción: coinciden casi exactamente cuando la dispersión de
+    precios de competencia es pareja, pero difieren bastante cuando hay
+    alta dispersión por tamaños de empaque (ver CLAUDE.md para el
+    detalle completo de la investigación, incluyendo por qué se
+    descartó la moda)."""
+    table_data = [["Retailer", "Índice de Precio", "Mediana", "Calificación", "TENA (informativo)"]]
     for cell in sorted(por_retailer, key=lambda c: c["retailer"]):
         excluded_skus = cell.get("client_price_excluded_skus") or 0
         excluded_price = cell.get("client_price_excluded_avg_price")
@@ -504,6 +521,7 @@ def _tabla_indice_precio(por_retailer: list) -> Table:
         table_data.append([
             cell["retailer"].capitalize(),
             _fmt_index(cell["price_index"]),
+            _fmt_index(cell.get("price_index_median")),
             RATING_LABELS.get(cell["price_index_rating"], cell["price_index_rating"]),
             tena_cell,
         ])
