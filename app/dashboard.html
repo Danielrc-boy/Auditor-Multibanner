@@ -153,6 +153,23 @@
             <div id="insightsExcludedNote" class="text-[10px] text-slate-500 pt-2 border-t border-slate-800 hidden"></div>
         </div>
 
+        <!-- DISTRIBUCIÓN POR RETAILER -->
+        <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
+            <div class="border-b border-slate-700/50 pb-4">
+                <h2 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-chart-simple text-indigo-400"></i> Distribuci&oacute;n por Retailer
+                </h2>
+                <p class="text-xs text-slate-400">Share of Shelf del cliente vs. competencia, por retailer activo (incluye retailers sin presencia del cliente).</p>
+            </div>
+            <div class="flex items-center gap-4 text-[10px] text-slate-400">
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-indigo-500 inline-block"></span> Cliente</span>
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-indigo-500/20 inline-block"></span> Competencia</span>
+            </div>
+            <div id="distributionChart" class="space-y-4">
+                <p class="text-xs text-slate-500">Cargando...</p>
+            </div>
+        </div>
+
         <!-- FILTROS GLOBALES -->
         <div class="p-4 bg-slate-800/50 border border-slate-700/50 rounded-xl flex flex-wrap gap-4 items-center justify-between">
             <div class="flex flex-wrap gap-3 items-center w-full md:w-auto">
@@ -494,6 +511,48 @@
             document.getElementById('execPromotedNote').innerText = excludedFromPromoted.length
                 ? `${dist.client_promoted_skus ?? 0} de ${dist.client_skus_promotable ?? 0} SKUs (excluye ${excludedFromPromoted.join(', ')})`
                 : `${dist.client_promoted_skus ?? 0} de ${dist.client_skus_promotable ?? 0} SKUs`;
+
+            renderDistributionChart(dist.by_retailer || []);
+        }
+
+        function _cap(s) {
+            return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+        }
+
+        // Mismo cálculo que ya trae /executive-summary (detail.distribution.by_retailer)
+        // -- no se duplica lógica de agregación aquí, solo se dibuja. Mismo estilo visual
+        // que la sección 4 (Distribución por Retailer) del PDF ejecutivo (_RetailerShareBar
+        // en pdf_report.py): barra apilada violeta/indigo (cliente) sobre pista clara
+        // (competencia), incluye retailers activos sin presencia del cliente (0%).
+        function renderDistributionChart(byRetailer) {
+            const container = document.getElementById('distributionChart');
+            if (!byRetailer.length) {
+                container.innerHTML = '<p class="text-xs text-slate-500">Sin datos en este período.</p>';
+                return;
+            }
+            const rows = [...byRetailer].sort((a, b) => a.retailer_code.localeCompare(b.retailer_code));
+            container.innerHTML = rows.map(r => {
+                const total = r.total_skus || 0;
+                const client = r.client_skus || 0;
+                const share = total ? (client / total * 100) : null;
+                const compShare = share !== null ? (100 - share) : null;
+                const presente = client > 0;
+                return `
+                    <div>
+                        <div class="flex justify-between items-baseline">
+                            <span class="font-bold text-sm text-slate-100">${_cap(r.retailer_code)}</span>
+                            <span class="font-extrabold text-lg ${share !== null ? 'text-indigo-400' : 'text-slate-500'}">${share !== null ? share.toFixed(1) + '%' : 'Datos insuficientes'}</span>
+                        </div>
+                        <div class="flex justify-between text-[10px] text-slate-500 mb-1.5">
+                            <span>${total} SKUs totales -- ${presente ? 'presente' : 'sin presencia'}</span>
+                            <span>${compShare !== null ? `Competencia ${compShare.toFixed(1)}%` : ''}</span>
+                        </div>
+                        <div class="w-full h-3 rounded-full bg-indigo-500/15 overflow-hidden">
+                            <div class="h-full bg-indigo-500 rounded-full transition-all" style="width:${share !== null ? share : 0}%"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
         }
 
         async function loadInsights() {
