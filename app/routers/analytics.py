@@ -988,3 +988,146 @@ def get_insights(
         return _drop_unreliable_price_insights(result, RETAILERS_WITH_UNRELIABLE_PRICE_INDEX)
     finally:
         conn.close()
+
+
+# Variantes de escritura de una misma marca CLIENTE que deben colapsar en
+# una sola fila de la tabla de referencia -- hoy solo pequeñín/pequeñin
+# (con y sin tilde, ver CLIENT_BRANDS en client_brands.py). Las marcas de
+# competencia con distinta capitalización (Kotex/KOTEX, Nosotras/NOSOTRAS
+# en filas viejas de Cafam/Colsubsidio, etc.) ya colapsan solo con
+# LOWER(brand) -- no necesitan entrada aquí.
+_BRAND_LABEL_OVERRIDES = {"pequeñin": "pequeñín"}
+
+
+def _canonical_brand(brand_lower: str) -> str:
+    return _BRAND_LABEL_OVERRIDES.get(brand_lower, brand_lower)
+
+
+def _build_brand_reference(rows: list, top_n: int) -> dict:
+    """
+    rows: lista de dicts {retailer, brand_lower, skus}, ya agregada sobre
+    el ÚLTIMO snapshot de cada SKU único (retailer, search_term,
+    product_name) del período filtrado -- mismo criterio de
+    deduplicación que _fetch_summary_metrics (Share of Shelf) y /export,
+    para que "SKU único" signifique lo mismo en todo el sistema.
+
+    Función pura (sin DB) a propósito, mismo patrón que
+    _compute_distribution_metrics -- se puede probar con datos reales
+    capturados sin necesitar Postgres.
+
+    Siempre incluye las 4 marcas cliente (CLIENT_BRANDS, colapsando
+    variantes de tilde vía _canonical_brand) aunque tengan 0 SKUs en el
+    período -- para que la tabla nunca "esconda" a un cliente ausente. De
+    las marcas de competencia solo conserva las `top_n` con más SKUs
+    únicos totales (relevancia real, no una lista curada a mano) -- el
+    resto se agrega en "Otras marcas" para no listar el centenar largo de
+    razones sociales/distribuidores con 1-2 SKUs que trae la data cruda.
+    """
+    client_keys = {_canonical_brand(b.strip().lower()) for b in CLIENT_BRANDS}
+
+    totals: dict = {}
+    by_retailer: dict = {}
+    all_retailers: set = set()
+    for row in rows:
+        key = _canonical_brand(row["brand_lower"])
+        retailer = row["retailer"]
+        all_retailers.add(retailer)
+        totals[key] = totals.get(key, 0) + row["skus"]
+        by_retailer.setdefault(key, {})
+        by_retailer[key][retailer] = by_retailer[key].get(retailer, 0) + row["skus"]
+
+    def entry(key: str, is_client: bool) -> dict:
+        return {
+            "brand": key.title(),
+            "is_client": is_client,
+            "total_skus": totals.get(key, 0),
+            "by_retailer": by_retailer.get(key, {}),
+        }
+
+    client_rows = sorted(
+        (entry(k, True) for k in client_keys),
+        key=lambda b: b["total_skus"], reverse=True,
+    )
+
+    competitor_keys = sorted(
+        (k for k in totals if k not in client_keys),
+        key=lambda k: totals[k], reverse=True,
+    )
+    top_keys = competitor_keys[:top_n]
+    rest_keys = competitor_keys[top_n:]
+
+    competitor_rows = [entry(k, False) for k in top_keys]
+
+    other_row = None
+    if rest_keys:
+        other_by_retailer: dict = {}
+        for k in rest_keys:
+            for retailer, count in by_retailer.get(k, {}).items():
+                other_by_retailer[retailer] = other_by_retailer.get(retailer, 0) + count
+        other_row = {
+            "brand": "Otras marcas",
+            "is_client": False,
+            "total_skus": sum(totals[k] for k in rest_keys),
+            "by_retailer": other_by_retailer,
+            "brands_included": len(rest_keys),
+        }
+
+    return {
+        "retailers": sorted(all_retailers),
+        "client_brands": client_rows,
+        "competitor_brands": competitor_rows,
+        "other_competitor_brands": other_row,
+        "top_n": top_n,
+    }
+
+
+@router.get("/analytics/brand-reference")
+@router.get("/analytics/brand-reference/")
+def get_brand_reference(
+    retailer: Optional[str] = Query(None),
+    search_term: Optional[str] = Query(None),
+    date_from: Optional[datetime] = Query(None),
+    date_to: Optional[datetime] = Query(None),
+    top_n: int = Query(12, ge=1, le=50, description="Cuántas marcas de competencia mostrar individualmente; el resto se agrupa en 'Otras marcas'."),
+):
+    """
+    Tabla de referencia: cuántos SKUs únicos (mismo criterio de
+    deduplicación que Share of Shelf) tiene cada marca, en total y por
+    retailer. Mismas convenciones de filtro que /insights.
+    """
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            where_sql = " WHERE 1=1"
+            params = []
+            if retailer and retailer != "ALL":
+                where_sql += " AND retailer ILIKE %s"
+                params.append(f"%{retailer}%")
+            if search_term and search_term != "ALL":
+                where_sql += " AND search_term ILIKE %s"
+                params.append(f"%{search_term}%")
+            if date_from:
+                where_sql += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date >= %s::date"
+                params.append(date_from)
+            if date_to:
+                where_sql += " AND (captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota')::date <= %s::date"
+                params.append(date_to)
+
+            sql = f"""
+                WITH latest_snapshot AS (
+                    SELECT DISTINCT ON (retailer, search_term, product_name)
+                        retailer,
+                        LOWER(COALESCE(brand, 'sin marca')) AS brand_lower
+                    FROM scraper_results
+                    {where_sql}
+                    ORDER BY retailer, search_term, product_name, id DESC
+                )
+                SELECT retailer, brand_lower, COUNT(*) AS skus
+                FROM latest_snapshot
+                GROUP BY retailer, brand_lower;
+            """
+            cur.execute(sql, tuple(params))
+            rows = [dict(r) for r in cur.fetchall()]
+        return _build_brand_reference(rows, top_n)
+    finally:
+        conn.close()

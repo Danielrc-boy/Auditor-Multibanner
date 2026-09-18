@@ -33,6 +33,7 @@ from app.routers.analytics import (
     RETAILERS_WITH_RELIABLE_AVAILABILITY,
     RETAILERS_WITH_UNRELIABLE_PRICE_INDEX,
     RETAILERS_WITHOUT_RELIABLE_DISCOUNT,
+    _build_brand_reference,
     _build_methodology,
     _compute_distribution_metrics,
     _drop_unreliable_price_insights,
@@ -226,6 +227,67 @@ class DropUnreliablePriceInsightsTests(unittest.TestCase):
         self.assertIn("Locatel", retailers_alertas_restantes)
         self.assertEqual(len(result["fortalezas"]), 1)
         self.assertEqual(result["fortalezas"][0]["retailer"], "Locatel")
+
+
+class BuildBrandReferenceTests(unittest.TestCase):
+    """
+    _build_brand_reference (nueva, tarea "Tabla de referencias por
+    marca"): rows simula la salida ya agregada por (retailer, brand_lower)
+    de la CTE latest_snapshot -- mismo criterio de deduplicación por SKU
+    único que Share of Shelf. Casos cubiertos: colapso de tilde
+    pequeñin/pequeñín, marca cliente ausente del período (debe seguir
+    apareciendo con 0), y el corte top_n con agregación en "Otras marcas".
+    """
+
+    def _rows(self):
+        return [
+            {"retailer": "Exito", "brand_lower": "nosotras", "skus": 10},
+            {"retailer": "Carulla", "brand_lower": "nosotras", "skus": 5},
+            {"retailer": "Exito", "brand_lower": "pequeñin", "skus": 2},
+            {"retailer": "Carulla", "brand_lower": "pequeñín", "skus": 3},
+            {"retailer": "Exito", "brand_lower": "kotex", "skus": 20},
+            {"retailer": "Carulla", "brand_lower": "kotex", "skus": 8},
+            {"retailer": "Exito", "brand_lower": "stayfree", "skus": 6},
+            {"retailer": "Exito", "brand_lower": "ekono", "skus": 1},
+            {"retailer": "Carulla", "brand_lower": "winny", "skus": 1},
+        ]
+
+    def test_marcas_cliente_siempre_presentes_incluso_en_cero(self):
+        result = _build_brand_reference(self._rows(), top_n=2)
+        client_names = {b["brand"] for b in result["client_brands"]}
+        self.assertEqual(client_names, {"Nosotras", "Pequeñín", "Tena", "Zewa"})
+        tena = next(b for b in result["client_brands"] if b["brand"] == "Tena")
+        self.assertEqual(tena["total_skus"], 0)
+        self.assertEqual(tena["by_retailer"], {})
+
+    def test_tildes_de_pequenin_colapsan_en_una_sola_fila(self):
+        result = _build_brand_reference(self._rows(), top_n=2)
+        pequenin = next(b for b in result["client_brands"] if b["brand"] == "Pequeñín")
+        self.assertEqual(pequenin["total_skus"], 5)  # 2 (Exito) + 3 (Carulla)
+        self.assertEqual(pequenin["by_retailer"], {"Exito": 2, "Carulla": 3})
+
+    def test_top_n_deja_solo_las_marcas_de_competencia_mas_grandes(self):
+        result = _build_brand_reference(self._rows(), top_n=2)
+        competitor_names = [b["brand"] for b in result["competitor_brands"]]
+        # Kotex (28 SKUs) y Stayfree (6) son las 2 más grandes -- Ekono y
+        # Winny (1 c/u) deben quedar agrupadas en "Otras marcas".
+        self.assertEqual(competitor_names, ["Kotex", "Stayfree"])
+
+    def test_marcas_de_competencia_fuera_del_top_n_se_agregan_en_otras(self):
+        result = _build_brand_reference(self._rows(), top_n=2)
+        otras = result["other_competitor_brands"]
+        self.assertIsNotNone(otras)
+        self.assertEqual(otras["brand"], "Otras marcas")
+        self.assertEqual(otras["total_skus"], 2)  # Ekono (1) + Winny (1)
+        self.assertEqual(otras["brands_included"], 2)
+
+    def test_sin_marcas_restantes_other_competitor_brands_es_none(self):
+        result = _build_brand_reference(self._rows(), top_n=10)
+        self.assertIsNone(result["other_competitor_brands"])
+
+    def test_retailers_devueltos_son_los_presentes_en_las_filas(self):
+        result = _build_brand_reference(self._rows(), top_n=10)
+        self.assertEqual(result["retailers"], ["Carulla", "Exito"])
 
 
 if __name__ == "__main__":
