@@ -262,10 +262,36 @@
                         </tr>
                     </thead>
                     <tbody id="positionsTableBody" class="divide-y divide-slate-800">
-                        <tr><td colspan="8" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
+                        <tr><td colspan="9" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
                     </tbody>
                 </table>
             </div>
+        </div>
+
+        <!-- TABLA DE REFERENCIA POR MARCA -->
+        <div class="p-6 bg-slate-800/40 border border-slate-700/40 rounded-xl space-y-4">
+            <div class="flex flex-wrap justify-between items-center gap-4 border-b border-slate-700/50 pb-4">
+                <div>
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-tags text-amber-400"></i> Referencia de Marcas
+                    </h2>
+                    <p class="text-xs text-slate-400">SKUs únicos por marca (mismo criterio de deduplicación que Share of Shelf), en total y por retailer</p>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs text-slate-300">
+                    <thead class="bg-slate-900/80 text-slate-400 uppercase font-bold text-[10px]">
+                        <tr id="brandReferenceHeadRow">
+                            <th class="p-3">Marca</th>
+                            <th class="p-3">Total SKUs</th>
+                        </tr>
+                    </thead>
+                    <tbody id="brandReferenceTableBody" class="divide-y divide-slate-800">
+                        <tr><td colspan="2" class="p-4 text-center text-slate-500">Cargando registros...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <p id="brandReferenceOtherNote" class="text-[10px] text-slate-500 hidden"></p>
         </div>
 
     </div>
@@ -299,8 +325,54 @@
 
                 loadPositionsTable();
                 loadExecutiveSummary();
+                loadBrandReference();
             } catch (err) {
                 console.error("Error cargando dashboard data:", err);
+            }
+        }
+
+        async function loadBrandReference() {
+            const retailer = document.getElementById('filterRetailer').value;
+            const term = document.getElementById('filterTerm').value;
+
+            try {
+                const res = await fetch(`${API_BASE}/analytics/brand-reference?retailer=${retailer}&search_term=${term}`);
+                const data = await res.json();
+
+                const retailers = data.retailers || [];
+                const headRow = document.getElementById('brandReferenceHeadRow');
+                headRow.innerHTML = `<th class="p-3">Marca</th><th class="p-3">Total SKUs</th>` +
+                    retailers.map(r => `<th class="p-3">${r}</th>`).join('');
+
+                const rows = [
+                    ...(data.client_brands || []),
+                    ...(data.competitor_brands || []),
+                    ...(data.other_competitor_brands ? [data.other_competitor_brands] : []),
+                ];
+
+                const tbody = document.getElementById('brandReferenceTableBody');
+                if (!rows.length) {
+                    tbody.innerHTML = `<tr><td colspan="${2 + retailers.length}" class="p-4 text-center text-slate-500">Sin datos en este período.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = rows.map(b => `
+                    <tr class="hover:bg-slate-800/30 transition ${b.is_client ? 'bg-indigo-500/5' : ''}">
+                        <td class="p-3 font-medium ${b.is_client ? 'text-indigo-300 font-bold' : 'text-slate-200'}">${b.brand}</td>
+                        <td class="p-3 font-mono font-semibold">${b.total_skus.toLocaleString()}</td>
+                        ${retailers.map(r => `<td class="p-3 font-mono text-slate-400">${(b.by_retailer[r] || 0).toLocaleString()}</td>`).join('')}
+                    </tr>
+                `).join('');
+
+                const note = document.getElementById('brandReferenceOtherNote');
+                if (data.other_competitor_brands) {
+                    note.classList.remove('hidden');
+                    note.innerText = `"Otras marcas" agrupa ${data.other_competitor_brands.brands_included} marcas de competencia fuera del top ${data.top_n} por SKUs únicos.`;
+                } else {
+                    note.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error("Error cargando referencia de marcas:", err);
             }
         }
 
