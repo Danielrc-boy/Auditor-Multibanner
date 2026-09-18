@@ -290,6 +290,49 @@ NUNCA asumas la plataforma o la URL de búsqueda. Siempre:
   opciones consideradas y descartadas por el momento (dejarlo como está;
   excluir TENA del término de búsqueda en el scraper) -- ver historial
   de decisión si hace falta revisitarlas.
+- **price_index: se agregó `price_index_median` COMO DATO ADICIONAL,
+  sin reemplazar al promedio (2026-09-18), tras investigar promedio vs.
+  moda vs. mediana con datos reales de producción.** Moda descartada:
+  para 4 retailers (Éxito, Carulla, Farmatodo, Coopidrogas), el precio
+  "más repetido" resultó venir de 1-2 productos individuales
+  re-capturados en corridas sucesivas (ej. Carulla: 236 filas de
+  cliente pero solo 13 productos únicos -- la moda con 20 repeticiones
+  era UN solo producto), no de varios productos distintos convergiendo
+  en un mismo precio -- no es una señal de mercado real, y al
+  deduplicar a último snapshot por SKU (mismo criterio que Share of
+  Shelf) cada producto casi siempre tiene un precio único, así que la
+  moda deja de existir como concepto útil. Promedio vs. mediana sí se
+  implementaron ambos (`price_index_median` junto a `price_index` en
+  `_build_cell` de insights_engine.py y en `_fetch_summary_metrics` de
+  analytics.py, expuesto en `/executive-summary`, `/insights`
+  (por_retailer) y sección 5 del PDF ejecutivo) porque el comparativo
+  con datos reales (último snapshot por SKU, TENA excluido de ambos
+  lados igual que price_index normal) mostró que a veces casi coinciden
+  y a veces difieren bastante, dependiendo de qué tan pareja sea la
+  dispersión de precios de competencia:
+  - Éxito (18 SKUs cliente / 24 competencia): 144.8 (promedio) vs. 145.8
+    (mediana) -- casi idénticos, dispersión de competencia pareja.
+  - Carulla (13 / 32): 118.0 vs. 150.0 -- bastante distintos. Se revisó
+    la distribución completa de precios de competencia (32 productos,
+    todos con precio distinto, de $1,650 a $39,900): es una dispersión
+    amplia con cola a la derecha por TAMAÑOS DE EMPAQUE (8 unidades vs.
+    60 unidades), no un par de outliers puntuales -- la mediana no es
+    "más correcta" en sentido absoluto, es menos sensible a los
+    paquetes grandes/premium que jalan el promedio hacia arriba.
+  - Farmatodo (13 / 2): 130.1 vs. 117.1 -- competencia con solo 2 SKUs
+    capturados bajo el término activo, muestra insuficiente para sacar
+    ninguna conclusión de cuál métrica es más representativa aquí.
+  - Coopidrogas (15 / 9): 133.9 vs. 143.8.
+  La muestra de competencia es chica y variable entre retailers (2 a 32
+  productos) -- **no se eligió una métrica principal todavía**: hace
+  falta ver cómo se comportan ambas con más volumen de datos (más
+  días de captura, más retailers con muestra amplia como Carulla) antes
+  de decidir cuál usar como definitiva. Ninguna alerta/oportunidad/
+  fortaleza del motor de insights usa `price_index_median` todavía
+  (solo se generan sobre `price_index`/promedio) -- sigue siendo
+  puramente informativo mientras tanto. Se hereda la misma mitigación
+  de contaminación de categoría que price_index normal: se fuerza a
+  None para Colsubsidio/Locatel (`RETAILERS_WITH_UNRELIABLE_PRICE_INDEX`).
 
 ## Retailers -- estado actual
 

@@ -24,6 +24,19 @@
                 <span id="clientBadge" class="ml-1 px-2.5 py-1 bg-slate-800 border border-slate-700 rounded-full text-[10px] font-semibold text-indigo-300 uppercase tracking-wide"></span>
             </div>
             <div class="flex items-center gap-3">
+                <div class="relative">
+                    <button id="downloadMenuBtn" onclick="toggleDownloadMenu()" class="px-4 py-2 bg-slate-800 border border-slate-700 text-slate-200 rounded-lg hover:bg-slate-700 text-xs font-semibold transition flex items-center gap-2">
+                        <i class="fa-solid fa-download text-sm"></i> Reportes <i class="fa-solid fa-chevron-down text-[9px] text-slate-500"></i>
+                    </button>
+                    <div id="downloadMenuPanel" class="hidden absolute right-0 mt-1.5 w-56 bg-slate-900 border border-slate-700 rounded-lg shadow-xl overflow-hidden z-50">
+                        <a href="#" onclick="downloadReport('pdf'); return false;" class="block px-4 py-2.5 text-xs text-slate-200 hover:bg-indigo-600/20">
+                            <i class="fa-solid fa-file-pdf mr-2 text-rose-400"></i> Descargar PDF Ejecutivo
+                        </a>
+                        <a href="#" onclick="downloadReport('excel'); return false;" class="block px-4 py-2.5 text-xs text-slate-200 hover:bg-indigo-600/20 border-t border-slate-800">
+                            <i class="fa-solid fa-file-excel mr-2 text-emerald-400"></i> Descargar Excel
+                        </a>
+                    </div>
+                </div>
                 <button onclick="triggerScraper()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 text-xs font-semibold transition flex items-center gap-2 shadow-lg shadow-indigo-600/30">
                     <i class="fa-solid fa-rotate text-sm"></i> Ejecuci&oacute;n Manual
                 </button>
@@ -729,6 +742,41 @@
                     </div>
                 </div>
             `;
+        }
+
+        function toggleDownloadMenu() {
+            document.getElementById('downloadMenuPanel').classList.toggle('hidden');
+        }
+        document.addEventListener('click', (e) => {
+            const panel = document.getElementById('downloadMenuPanel');
+            const btn = document.getElementById('downloadMenuBtn');
+            if (panel && !panel.classList.contains('hidden') && !btn.contains(e.target) && !panel.contains(e.target)) {
+                panel.classList.add('hidden');
+            }
+        });
+
+        // Mismos filtros globales que ya usa el Resumen Ejecutivo
+        // (Retailer/Término/Desde/Hasta) -- se leen al momento de
+        // descargar, no al cargar la página, para que el reporte
+        // siempre refleje lo que el usuario tiene seleccionado ahora.
+        function _currentFilterParams() {
+            const retailer = document.getElementById('filterRetailer').value;
+            const term = document.getElementById('filterTerm').value;
+            const dateFrom = document.getElementById('execDateFrom').value;
+            const dateTo = document.getElementById('execDateTo').value;
+            const params = new URLSearchParams();
+            if (retailer && retailer !== 'ALL') params.set('retailer', retailer);
+            if (term && term !== 'ALL') params.set('search_term', term);
+            if (dateFrom) params.set('date_from', dateFrom);
+            if (dateTo) params.set('date_to', dateTo);
+            return params;
+        }
+
+        function downloadReport(type) {
+            const params = _currentFilterParams();
+            const path = type === 'pdf' ? '/reports/executive-pdf' : '/export';
+            window.open(`${API_BASE}${path}?${params.toString()}`, '_blank');
+            document.getElementById('downloadMenuPanel').classList.add('hidden');
         }
 
         async function triggerScraper() {
