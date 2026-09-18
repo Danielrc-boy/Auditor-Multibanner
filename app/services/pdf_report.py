@@ -5,14 +5,24 @@ por retailer, posición dominante por retailer, conclusiones clave,
 metodología), en ese orden.
 
 Build en dos etapas, a propósito:
-  - Etapa 1 (esta versión): solo texto y tablas con datos reales -- sin
+  - Etapa 1 (superada): solo texto y tablas con datos reales -- sin
     gráficas de barras/círculos ni paleta de marca -- para confirmar que
-    las 8 secciones traen los números correctos antes de invertir tiempo
-    en el diseño visual.
-  - Etapa 2 (pendiente, requiere aprobación de la etapa 1 primero): las
-    secciones 4/5/6 se reemplazan por HorizontalBarChart/formas Circle de
-    reportlab.graphics con la paleta de marca; portada+resumen llevan el
-    layout horizontal tipo presentación aprobado primero por separado.
+    las 8 secciones traían los números correctos antes de invertir tiempo
+    en el diseño visual. Secciones 4-8 siguen en este estado (portrait,
+    tabla verde genérica) -- fuera de alcance de este pase.
+  - Etapa 2, portada + resumen (hecho, 2026-09-17): secciones 1-2 en
+    plantillas horizontales tipo presentación (BaseDocTemplate con
+    PageTemplate por sección, ver generate_executive_pdf), paleta de
+    marca Vantic real (muestreada de app/assets/logo_vantic.png, ver
+    COLOR_* arriba) y logo embebido en la portada. La cita editorial
+    (sección 3) se integró como blockquote en la misma página horizontal
+    del resumen en vez de su propio PageBreak, para que la columna
+    izquierda de esa página cuente una sola historia (prosa + cita) junto
+    a la tarjeta de KPIs de la columna derecha.
+  - Etapa 2, resto del documento (pendiente, requiere aprobación del
+    diseño de portada+resumen primero): secciones 4/5/6 se reemplazan por
+    HorizontalBarChart/formas Circle de reportlab.graphics con la misma
+    paleta.
 
 Decisión de librería (2026-09-17, documentada también en CLAUDE.md):
 reportlab, no fpdf2 ni WeasyPrint.
@@ -47,20 +57,42 @@ from datetime import datetime
 from typing import Optional
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.pagesizes import letter
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import landscape, letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
+    BaseDocTemplate,
+    Frame,
     Image,
+    NextPageTemplate,
     PageBreak,
+    PageTemplate,
     Paragraph,
-    SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
 )
+
+# Paleta de marca Vantic, extraída con muestreo real de píxeles de
+# app/assets/logo_vantic.png (2026-09-17) -- no son valores inventados
+# a ojo: el isotipo/wordmark usa una familia de violetas en el rango de
+# tono ~270-280°, de la que se tomaron un extremo oscuro (casi carbón,
+# con tinte violeta) y uno medio/claro para los acentos. "Carbón" del
+# nombre de la paleta es el gris neutro para texto de cuerpo -- no
+# forma parte del logo, es la convención tipográfica estándar para no
+# usar negro puro sobre los fondos lila.
+COLOR_CHARCOAL = colors.HexColor("#2B2B33")
+COLOR_CHARCOAL_MUTED = colors.HexColor("#6B6B75")
+COLOR_VIOLET_DARK = colors.HexColor("#241640")
+COLOR_VIOLET = colors.HexColor("#5B3876")
+COLOR_LILAC = colors.HexColor("#8A5FA8")
+COLOR_LILAC_PALE = colors.HexColor("#F4EFFA")
+COLOR_LILAC_LINE = colors.HexColor("#D9C9EC")
+
+PAGE_LANDSCAPE = landscape(letter)
+PAGE_PORTRAIT = letter
 
 RATING_LABELS = {
     "verde": "Bien",
@@ -113,23 +145,44 @@ def _pick_highlight_insight(insights: dict) -> Optional[dict]:
 def _build_styles():
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(
-        name="PortadaTitulo", parent=styles["Title"], fontSize=28, leading=34, alignment=TA_CENTER,
+        name="PortadaTitulo", parent=styles["Title"], fontName="Helvetica-Bold",
+        fontSize=34, leading=40, alignment=TA_CENTER, textColor=COLOR_CHARCOAL,
     ))
     styles.add(ParagraphStyle(
-        name="PortadaSubtitulo", parent=styles["Normal"], fontSize=14, leading=18, alignment=TA_CENTER,
-        textColor=colors.HexColor("#555555"), spaceBefore=12,
+        name="PortadaSubtitulo", parent=styles["Normal"], fontName="Helvetica",
+        fontSize=15, leading=19, alignment=TA_CENTER, textColor=COLOR_VIOLET, spaceBefore=10,
     ))
     styles.add(ParagraphStyle(
-        name="CifraGrande", parent=styles["Title"], fontSize=48, leading=56, alignment=TA_CENTER,
-        textColor=colors.HexColor("#1a6b3c"),
+        name="PortadaMeta", parent=styles["Normal"], fontName="Helvetica",
+        fontSize=10.5, leading=14, alignment=TA_CENTER, textColor=COLOR_CHARCOAL_MUTED, spaceBefore=4,
     ))
     styles.add(ParagraphStyle(
-        name="CifraGrandeLabel", parent=styles["Normal"], fontSize=12, alignment=TA_CENTER,
-        textColor=colors.HexColor("#555555"),
+        name="ResumenTitulo", parent=styles["Heading2"], fontName="Helvetica-Bold",
+        fontSize=20, leading=24, textColor=COLOR_CHARCOAL, spaceAfter=10,
     ))
     styles.add(ParagraphStyle(
-        name="CitaEditorial", parent=styles["Normal"], fontSize=13, alignment=TA_CENTER,
-        textColor=colors.HexColor("#1a1a1a"), leading=18, spaceBefore=6, spaceAfter=6,
+        name="ResumenProsa", parent=styles["Normal"], fontName="Helvetica",
+        fontSize=10.5, leading=15, alignment=TA_LEFT, textColor=COLOR_CHARCOAL,
+    ))
+    styles.add(ParagraphStyle(
+        name="CitaEditorial", parent=styles["Normal"], fontName="Helvetica-Oblique",
+        fontSize=11.5, alignment=TA_LEFT, textColor=COLOR_VIOLET_DARK, leading=16,
+    ))
+    styles.add(ParagraphStyle(
+        name="CardLabel", parent=styles["Normal"], fontName="Helvetica-Bold",
+        fontSize=10, alignment=TA_CENTER, textColor=COLOR_LILAC_LINE, spaceAfter=2,
+    ))
+    styles.add(ParagraphStyle(
+        name="CardNumero", parent=styles["Title"], fontName="Helvetica-Bold",
+        fontSize=50, leading=54, alignment=TA_CENTER, textColor=colors.white,
+    ))
+    styles.add(ParagraphStyle(
+        name="CardKPIValor", parent=styles["Normal"], fontName="Helvetica-Bold",
+        fontSize=14, alignment=TA_CENTER, textColor=colors.white,
+    ))
+    styles.add(ParagraphStyle(
+        name="CardKPILabel", parent=styles["Normal"], fontName="Helvetica",
+        fontSize=7.5, alignment=TA_CENTER, textColor=COLOR_LILAC_LINE,
     ))
     styles.add(ParagraphStyle(
         name="SeccionTitulo", parent=styles["Heading2"], spaceBefore=18, spaceAfter=8,
@@ -189,6 +242,102 @@ def _logo_flowable(logo_path: Optional[str], max_width_cm: float = 6.0) -> Optio
     width = max_width_cm * cm
     height = width * (height_px / width_px)
     return Image(logo_path, width=width, height=height, hAlign="CENTER")
+
+
+def _draw_portada_background(canvas, doc):
+    """Fondo de la portada (plantilla 'Portada', horizontal): lavado lila
+    pálido de página completa + franja sólida violeta oscuro en el borde
+    superior + un motivo decorativo de círculos en la esquina inferior
+    derecha, en eco del isotipo de nodos conectados del logo -- puramente
+    ornamental, no reemplaza al logo real (que se inserta como Image
+    dentro del frame, no aquí)."""
+    width, height = PAGE_LANDSCAPE
+    canvas.saveState()
+    canvas.setFillColor(COLOR_LILAC_PALE)
+    canvas.rect(0, 0, width, height, stroke=0, fill=1)
+    band_height = 1.6 * cm
+    canvas.setFillColor(COLOR_VIOLET_DARK)
+    canvas.rect(0, height - band_height, width, band_height, stroke=0, fill=1)
+    for x, y, r, color in (
+        (width - 2.3 * cm, 2.7 * cm, 0.55 * cm, COLOR_LILAC),
+        (width - 1.2 * cm, 3.8 * cm, 0.32 * cm, COLOR_VIOLET),
+        (width - 3.4 * cm, 1.7 * cm, 0.28 * cm, COLOR_VIOLET_DARK),
+        (width - 0.9 * cm, 1.5 * cm, 0.18 * cm, COLOR_LILAC),
+    ):
+        canvas.setFillColor(color)
+        canvas.circle(x, y, r, stroke=0, fill=1)
+    canvas.restoreState()
+
+
+def _draw_resumen_background(canvas, doc):
+    """Fondo de la página de Resumen Ejecutivo (plantilla 'Resumen',
+    horizontal): mismo lavado lila pálido, con una franja delgada
+    violeta oscuro arriba para mantener continuidad de marca con la
+    portada sin repetir el mismo peso visual."""
+    width, height = PAGE_LANDSCAPE
+    canvas.saveState()
+    canvas.setFillColor(COLOR_LILAC_PALE)
+    canvas.rect(0, 0, width, height, stroke=0, fill=1)
+    band_height = 0.5 * cm
+    canvas.setFillColor(COLOR_VIOLET_DARK)
+    canvas.rect(0, height - band_height, width, band_height, stroke=0, fill=1)
+    canvas.restoreState()
+
+
+def _cita_blockquote(texto: str, styles) -> Table:
+    """Cita editorial (sección 3, integrada en la misma página horizontal
+    del resumen) como blockquote: barra violeta a la izquierda + fondo
+    blanco, en vez de texto centrado suelto como en la etapa 1."""
+    table = Table([[Paragraph(f"“{texto}”", styles["CitaEditorial"])]], colWidths=[None])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+        ("LINEBEFORE", (0, 0), (0, -1), 3, COLOR_VIOLET),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    return table
+
+
+def _kpi_stat_card(period: dict, styles, width: float) -> Table:
+    """Tarjeta violeta con la cifra grande de Share of Shelf + 3 KPIs de
+    apoyo (DN, DP, Disponibilidad) apilados debajo -- reemplaza la cifra
+    suelta de la etapa 1 con el formato de 'tarjeta de presentación' de
+    la columna derecha del Resumen Ejecutivo. No recalcula nada: reusa
+    los mismos campos de `period` que ya consumían las demás secciones."""
+    kpis = [
+        ("DN", _fmt_pct(period.get("dn_pct"))),
+        ("DP", _fmt_pct(period.get("dp_pct"))),
+        ("Disponib.", _fmt_pct(period.get("availability_pct"))),
+    ]
+    kpi_table = Table(
+        [[Paragraph(v, styles["CardKPIValor"]) for _, v in kpis], [Paragraph(k, styles["CardKPILabel"]) for k, _ in kpis]],
+        colWidths=[width / 3.0] * 3,
+    )
+    kpi_table.setStyle(TableStyle([
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+    ]))
+    card = Table(
+        [
+            [Paragraph("SHARE OF SHELF", styles["CardLabel"])],
+            [Paragraph(_fmt_pct(period["share_of_shelf_pct"]), styles["CardNumero"])],
+            [Spacer(1, 0.4 * cm)],
+            [kpi_table],
+        ],
+        colWidths=[width],
+    )
+    card.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), COLOR_VIOLET),
+        ("TOPPADDING", (0, 0), (0, 0), 20),
+        ("BOTTOMPADDING", (0, -1), (0, -1), 20),
+        ("LEFTPADDING", (0, 0), (-1, -1), 16),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+        ("LINEBELOW", (0, 1), (0, 1), 0.75, COLOR_LILAC),
+        ("TOPPADDING", (0, 3), (0, 3), 10),
+    ]))
+    return card
 
 
 def _tabla_distribucion(by_retailer_dn_dp: list) -> Table:
@@ -282,47 +431,100 @@ def generate_executive_pdf(
 ) -> bytes:
     styles = _build_styles()
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=letter,
-        topMargin=2 * cm, bottomMargin=2 * cm, leftMargin=2 * cm, rightMargin=2 * cm,
+
+    # Secciones 1-2 (Portada, Resumen Ejecutivo) van en plantillas
+    # horizontales tipo presentación, aprobadas por separado antes de
+    # replicar el diseño al resto del documento (ver docstring del
+    # módulo) -- las secciones 3-8 se quedan en la plantilla vertical de
+    # la etapa 1 por ahora, sin tocar.
+    margin_landscape = 1.5 * cm
+    portada_band_h = 1.6 * cm
+    resumen_band_h = 0.5 * cm
+    margin_portrait = 2 * cm
+
+    frame_portada = Frame(
+        margin_landscape, margin_landscape,
+        PAGE_LANDSCAPE[0] - 2 * margin_landscape,
+        PAGE_LANDSCAPE[1] - 2 * margin_landscape - portada_band_h,
+        id="portada", showBoundary=0,
     )
+    frame_resumen = Frame(
+        margin_landscape, margin_landscape,
+        PAGE_LANDSCAPE[0] - 2 * margin_landscape,
+        PAGE_LANDSCAPE[1] - 2 * margin_landscape - resumen_band_h,
+        id="resumen", showBoundary=0,
+    )
+    frame_normal = Frame(
+        margin_portrait, margin_portrait,
+        PAGE_PORTRAIT[0] - 2 * margin_portrait,
+        PAGE_PORTRAIT[1] - 2 * margin_portrait,
+        id="normal", showBoundary=0,
+    )
+
+    doc = BaseDocTemplate(
+        buffer, pagesize=PAGE_PORTRAIT,
+        topMargin=margin_portrait, bottomMargin=margin_portrait,
+        leftMargin=margin_portrait, rightMargin=margin_portrait,
+    )
+    doc.addPageTemplates([
+        PageTemplate(id="Portada", frames=[frame_portada], pagesize=PAGE_LANDSCAPE,
+                     onPage=_draw_portada_background),
+        PageTemplate(id="Resumen", frames=[frame_resumen], pagesize=PAGE_LANDSCAPE,
+                     onPage=_draw_resumen_background),
+        PageTemplate(id="Normal", frames=[frame_normal], pagesize=PAGE_PORTRAIT),
+    ])
     story = []
 
     period = exec_summary["period"]
     by_retailer_dn_dp = exec_summary["detail"]["distribution"]["by_retailer"]
     por_retailer = insights.get("por_retailer", [])
 
-    # --- 1. Portada ---
-    logo = _logo_flowable(logo_path)
-    story.append(Spacer(1, 3 * cm if logo else 4 * cm))
+    # --- 1. Portada (horizontal, plantilla 'Portada') ---
+    logo = _logo_flowable(logo_path, max_width_cm=7.0)
+    story.append(Spacer(1, 2.6 * cm if logo else 4.2 * cm))
     if logo:
         story.append(logo)
-        story.append(Spacer(1, 0.8 * cm))
+        story.append(Spacer(1, 1.0 * cm))
     story.append(Paragraph(client_name, styles["PortadaTitulo"]))
     story.append(Paragraph("Reporte Ejecutivo de Digital Shelf", styles["PortadaSubtitulo"]))
-    story.append(Paragraph(period_label, styles["PortadaSubtitulo"]))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph(period_label, styles["PortadaMeta"]))
     story.append(Paragraph(
-        f"Generado el {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles["PortadaSubtitulo"]
+        f"Generado el {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles["PortadaMeta"]
     ))
+    story.append(NextPageTemplate("Resumen"))
     story.append(PageBreak())
 
-    # --- 2. Resumen ejecutivo + cifra grande ---
-    story.append(Paragraph("Resumen Ejecutivo", styles["SeccionTitulo"]))
-    story.append(Paragraph(
-        _resumen_prosa(client_name, period, by_retailer_dn_dp), styles["Normal"]
-    ))
-    story.append(Spacer(1, 0.8 * cm))
-    story.append(Paragraph(_fmt_pct(period["share_of_shelf_pct"]), styles["CifraGrande"]))
-    story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph("Share of Shelf consolidado", styles["CifraGrandeLabel"]))
-    story.append(Spacer(1, 0.6 * cm))
+    # --- 2. Resumen ejecutivo (horizontal, plantilla 'Resumen') ---
+    # columna izquierda: título + prosa + cita editorial (sección 3,
+    # integrada en la misma página); columna derecha: tarjeta violeta
+    # con la cifra grande de Share of Shelf + KPIs de apoyo.
+    left_col_w = 15.5 * cm
+    right_col_w = 8.5 * cm
 
-    # --- 3. Cita editorial ---
+    left_col_content = [
+        Paragraph("Resumen Ejecutivo", styles["ResumenTitulo"]),
+        Paragraph(_resumen_prosa(client_name, period, by_retailer_dn_dp), styles["ResumenProsa"]),
+    ]
     highlight = _pick_highlight_insight(insights)
     if highlight:
-        story.append(Paragraph(
-            f'"{highlight["mensaje_especifico"]}"', styles["CitaEditorial"]
-        ))
+        left_col_content.append(Spacer(1, 0.5 * cm))
+        left_col_content.append(_cita_blockquote(highlight["mensaje_especifico"], styles))
+
+    right_col_content = [_kpi_stat_card(period, styles, width=right_col_w - 0.6 * cm)]
+
+    resumen_table = Table([[left_col_content, right_col_content]], colWidths=[left_col_w, right_col_w])
+    resumen_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (0, 0), 0),
+        ("RIGHTPADDING", (0, 0), (0, 0), 0),
+        ("LEFTPADDING", (1, 0), (1, 0), 0.6 * cm),
+        ("RIGHTPADDING", (1, 0), (1, 0), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(resumen_table)
+    story.append(NextPageTemplate("Normal"))
     story.append(PageBreak())
 
     # --- 4. Distribución por retailer (Share of Shelf, DN, DP) ---

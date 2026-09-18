@@ -461,22 +461,45 @@ perfil de riesgo que el resto de `requirements.txt`) y trae Platypus
 (flujo/paginación) + `reportlab.graphics` (gráficas nativas para la
 etapa 2, sin necesitar matplotlib ni imágenes intermedias).
 
-**Build en dos etapas**: la versión actual (etapa 1) es solo texto y
-tablas con datos reales, sin la paleta de marca ni las gráficas de
-barras/círculos -- para confirmar que las 8 secciones traen los números
-correctos antes de invertir tiempo en diseño visual. La etapa 2 (diseño
-completo: paleta lila/carbón de Vantic, formato horizontal, logo,
-gráficas nativas de reportlab.graphics) empieza por Portada + Resumen
-Ejecutivo para aprobación antes de replicarse al resto.
+**Build en dos etapas**: la versión etapa 1 (superada) era solo texto y
+tablas con datos reales, sin paleta de marca ni gráficas -- para
+confirmar que las 8 secciones traían los números correctos antes de
+invertir tiempo en diseño visual.
 
-**PENDIENTE: falta `app/assets/logo_vantic.png`** -- el archivo no
-existe todavía en el repo (confirmado 2026-09-17, `find` sobre todo el
-proyecto no encuentra ningún asset con "logo" ni "vantic" en el nombre).
-`generate_executive_pdf()` ya maneja su ausencia sin reventar (portada
-sin logo, solo texto) -- el router (`LOGO_PATH` en `reports.py`) solo lo
-usa si `os.path.exists()` confirma que está. Cuando se agregue el
-archivo real (versión ya corregida con el nombre "VantiC") no hace falta
-tocar código, solo copiarlo a esa ruta.
+**Etapa 2, Portada + Resumen Ejecutivo: hecho (2026-09-17, en
+`staging`)**. `app/assets/logo_vantic.png` ya existe en el repo (el
+usuario lo adjuntó directamente en la conversación, ruta original
+`~/Downloads/LogoVantic.png`) -- el pendiente de "falta el logo" de esta
+misma fecha quedó resuelto, ya no aplica. Paleta de marca (`COLOR_*` en
+`pdf_report.py`) extraída con muestreo real de píxeles del logo (violeta
+oscuro ~`#241640`, violeta medio ~`#5B3876`, lila ~`#8A5FA8`/`#D9C9EC`),
+no inventada a ojo. Secciones 1-2 ahora usan `BaseDocTemplate` con
+`PageTemplate` propio por sección (patrón nuevo en este archivo, no
+existía en etapa 1): portada y resumen en horizontal tipo presentación
+(fondo lila pálido, franja violeta oscuro, logo embebido, motivo de
+círculos decorativo en portada); el resto del documento (secciones 3-8)
+sigue en la plantilla vertical de la etapa 1 sin tocar -- la cita
+editorial (sección 3) se movió a la misma página horizontal del resumen
+como blockquote en vez de tener su propio salto de página, para que la
+columna izquierda cuente una sola historia (prosa + cita) junto a la
+tarjeta violeta de KPIs (Share of Shelf + DN/DP/Disponibilidad) de la
+columna derecha. Verificado localmente generando el PDF con datos de
+prueba representativos (formas reales de los dicts de
+`/executive-summary`, `/insights`, `/methodology`) y renderizando las
+páginas a imagen para revisión visual -- no se pudo probar contra datos
+reales de staging porque no hay `DATABASE_URL` configurada en el entorno
+local; falta verificar visualmente contra la URL de staging desplegada
+(ver "REGLA DE ORO" arriba) antes de mergear a `main`. Un primer intento
+de la tarjeta de KPIs tenía las etiquetas ("SHARE OF SHELF", "DN/DP/
+Disponib.") en lila oscuro sobre fondo violeta -- casi ilegible por poco
+contraste, corregido usando el lila claro (`#D9C9EC`) para esas
+etiquetas antes de subir nada.
+
+**Pendiente (etapa 2, resto del documento)**: secciones 4/5/6 siguen en
+texto/tabla plano de la etapa 1 (sin gráficas nativas de
+`reportlab.graphics` ni paleta de marca) -- a propósito, según el plan
+original de aprobar portada+resumen por separado antes de replicar el
+diseño al resto.
 
 ## Estilo de trabajo esperado
 
