@@ -94,6 +94,8 @@ COLOR_LILAC_LINE = colors.HexColor("#D9C9EC")
 PAGE_LANDSCAPE = landscape(letter)
 PAGE_PORTRAIT = letter
 
+CARD_SIDE_PADDING = 16  # pt -- padding lateral de _kpi_stat_card, ver su docstring
+
 RATING_LABELS = {
     "verde": "Bien",
     "amarillo": "Atención",
@@ -311,13 +313,23 @@ def _kpi_stat_card(period: dict, styles, width: float) -> Table:
         ("DP", _fmt_pct(period.get("dp_pct"))),
         ("Disponib.", _fmt_pct(period.get("availability_pct"))),
     ]
+    # `width` es el ancho TOTAL de la tarjeta (ver colWidths=[width] más
+    # abajo) -- la tabla de KPIs va anidada dentro de esa misma tarjeta,
+    # así que su ancho debe descontar el padding lateral de la tarjeta
+    # (CARD_SIDE_PADDING*2) o se sale del borde violeta. Confirmado con
+    # evidencia real contra staging (2026-09-17): con
+    # availability_pct=100.0, "100.0%" se salía físicamente del borde
+    # derecho de la tarjeta -- no era un caso hipotético.
+    inner_width = width - 2 * CARD_SIDE_PADDING
     kpi_table = Table(
         [[Paragraph(v, styles["CardKPIValor"]) for _, v in kpis], [Paragraph(k, styles["CardKPILabel"]) for k, _ in kpis]],
-        colWidths=[width / 3.0] * 3,
+        colWidths=[inner_width / 3.0] * 3,
     )
     kpi_table.setStyle(TableStyle([
         ("TOPPADDING", (0, 0), (-1, -1), 1),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
     ]))
     card = Table(
         [
@@ -332,8 +344,8 @@ def _kpi_stat_card(period: dict, styles, width: float) -> Table:
         ("BACKGROUND", (0, 0), (-1, -1), COLOR_VIOLET),
         ("TOPPADDING", (0, 0), (0, 0), 20),
         ("BOTTOMPADDING", (0, -1), (0, -1), 20),
-        ("LEFTPADDING", (0, 0), (-1, -1), 16),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+        ("LEFTPADDING", (0, 0), (-1, -1), CARD_SIDE_PADDING),
+        ("RIGHTPADDING", (0, 0), (-1, -1), CARD_SIDE_PADDING),
         ("LINEBELOW", (0, 1), (0, 1), 0.75, COLOR_LILAC),
         ("TOPPADDING", (0, 3), (0, 3), 10),
     ]))
