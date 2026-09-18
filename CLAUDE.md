@@ -551,11 +551,66 @@ ambos pasos de verificación, no solo el local. Corregido restando
 re-verificado contra staging con el mismo dato real (100.0%) para
 confirmar.
 
-**Pendiente (etapa 2, resto del documento)**: secciones 4/5/6 siguen en
-texto/tabla plano de la etapa 1 (sin gráficas nativas de
-`reportlab.graphics` ni paleta de marca) -- a propósito, según el plan
-original de aprobar portada+resumen por separado antes de replicar el
-diseño al resto.
+**Sección 4 (Distribución por Retailer): hecho (2026-09-17, en
+`staging`).** Tabla de rejilla verde reemplazada por una barra
+horizontal apilada (violeta = cliente, sobre pista lila clara =
+competencia) dibujada a mano con `_RetailerShareBar` (canvas.roundRect +
+clipping, no `HorizontalBarChart` de `reportlab.graphics` -- ver
+docstring completo en `pdf_report.py`). Sin verde institucional en esta
+sección: es monocromática violeta a propósito, porque el dato en sí
+(share cliente vs. competencia) no tiene una calificación de estado
+verde/amarillo/rojo por celda.
+
+**Secciones 5/6/7/8 (resto del documento): hecho (2026-09-18, merge
+SELECTIVO a `main` en commit aparte -- ver más abajo).** Sección 5
+(Índice de Precio) como `_PriceIndexBar`, mismo mecanismo de barra a
+mano que la sección 4, con una línea de referencia fija en 100 (paridad)
+y un rombo violeta oscuro marcando `price_index_median` (el dato
+adicional agregado el mismo día, ver "Lecciones aprendidas" más abajo).
+Sección 6 (Posición Dominante) como `_TopThreeCircle`, una dona
+proporcional dibujada con `canvas.wedge` (no `Pie`/`HorizontalBarChart`
+de `reportlab.graphics`, mismo criterio de control de estilo). A
+diferencia de la sección 4, las secciones 5/6 SÍ tienen una calificación
+de estado por celda (`price_index_rating`/`position_rating`), así que
+usan una paleta de semáforo aparte de la violeta de marca
+(`_STATUS_COLORS` en `pdf_report.py`, tonos "-600" de Tailwind) --
+mismo criterio de color que ya usa el dashboard para
+Alertas/Oportunidades/Fortalezas. La sección 7 (Conclusiones) reusa
+exactamente esos mismos 3 colores (`_CATEGORIA_STATUS_KEY`) en cajas con
+barra de color a la izquierda (`_callout_box`, mismo patrón que
+`_cita_blockquote` de la sección 3) en vez de una lista de viñetas
+negras. La sección 8 (Metodología) usa `_note_box` (fondo lila pálido)
+para el disclaimer y traduce las claves snake_case de
+`methodology["metrics"]` a nombres legibles (`METRIC_DISPLAY_NAMES`) --
+la etapa 1 imprimía la clave cruda (ej. "share_of_shelf_pct") como
+encabezado, un detalle que quedó sin pulir hasta ahora.
+
+Verificado primero localmente (PDF generado con el fixture real de
+`tests/fixtures/production_snapshot_2026-09-15.json` y renderizado a
+imagen con pymupdf, dependencia de desarrollo NO agregada a
+`requirements.txt`) -- se encontró y corrigió un bug real antes de subir
+nada: el rombo de `price_index_median` podía quedar pegado al borde
+derecho de la barra (o clippeado) cuando la mediana superaba al
+promedio, porque `scale_max` solo consideraba `price_index` al calcular
+la escala común de la sección -- corregido incluyendo también
+`price_index_median` en ese cálculo (ver `_retailer_price_index_rows`).
+Verificado también contra staging con datos reales antes de dar el
+trabajo por terminado, mismo criterio que portada+resumen.
+
+**Merge selectivo a `main` (2026-09-18)**: el lote de ese día
+(price_index_median, botón de descarga de reportes, y los puntos
+mecánicos 1/2/3/5) se aprobó para producción ANTES de que el rediseño
+visual de las secciones 5-8 estuviera listo -- mergear todo `staging` de
+una habría llevado a producción un PDF a medio diseñar (visible desde el
+botón de descarga recién agregado). Se probó un cherry-pick selectivo en
+una rama descartable primero (los commits del lote SÍ tocaban
+`pdf_report.py`, mismo archivo que el rediseño, así que no era obvio que
+fuera a aplicar limpio): aplicó sin conflictos porque los cambios de ese
+lote solo tocaban funciones (`_resumen_prosa`, `_tabla_indice_precio`)
+que ya existían tal cual en la versión de `main` -- el rediseño de
+secciones 5/6 (que sí las reemplazaba) todavía no estaba en el historial
+en ese momento. Confirmar esto con una rama de prueba ANTES de tocar
+`main` real evitó tener que revertir nada.
 
 ## Estilo de trabajo esperado
 

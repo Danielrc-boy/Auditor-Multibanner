@@ -27,11 +27,34 @@ Build en dos etapas, a propósito:
     estilo -- sin bordes duros, esquinas redondeadas, número grande al
     lado -- que armar la gráfica genérica de reportlab.graphics para
     este caso). Sin verde institucional en esta sección.
-  - Etapa 2, secciones 5/6 (pendiente, requiere aprobación de la sección
-    4 primero, mismo proceso por partes que portada+resumen): sección 5
-    (Índice de Precio) como el mismo tipo de barra; sección 6 (Posición
-    Dominante) como círculos proporcionales. Siguen en tabla verde de la
-    etapa 1 por ahora, a propósito.
+  - Etapa 2, secciones 5/6/7/8 (hecho, 2026-09-18 -- resto del
+    documento, ver CLAUDE.md): sección 5 (Índice de Precio) como
+    `_PriceIndexBar`, mismo mecanismo de dibujo a mano que la sección 4
+    (roundRect + clipping) -- una barra 0..scale_max con una línea de
+    referencia fija en 100 (paridad) y un rombo violeta oscuro marcando
+    price_index_median (agregado el mismo día como dato adicional junto
+    al promedio, ver insights_engine.py). Sección 6 (Posición Dominante)
+    como `_TopThreeCircle`, una dona proporcional dibujada con
+    canvas.wedge (no HorizontalBarChart/Pie de reportlab.graphics, mismo
+    criterio de control de estilo que la sección 4/5). A diferencia de
+    la sección 4 (monocromática violeta, "sin verde institucional" a
+    propósito porque ahí no hay una calificación de estado), las
+    secciones 5/6 SÍ tienen una calificación por celda
+    (price_index_rating/position_rating: verde/amarillo/rojo/
+    no_concluyente) -- se colorean con una paleta de semáforo aparte
+    (_STATUS_COLORS, tonos "-600" de Tailwind) en vez de violeta, mismo
+    criterio de color que ya usa el dashboard para
+    Alertas/Oportunidades/Fortalezas (que en la sección 7 reusan esos
+    mismos 3 colores, ver _CATEGORIA_STATUS_KEY). Secciones 7
+    (Conclusiones) y 8 (Metodología) no tenían un dato numérico natural
+    para graficar -- se rediseñaron solo con tipografía/color de marca:
+    7 usa `_callout_box` (caja con barra de color a la izquierda, mismo
+    patrón que `_cita_blockquote` de la sección 3 pero coloreado por
+    categoría) en vez de una lista de viñetas negras; 8 usa
+    `_note_box` (fondo lila pálido) para el disclaimer y traduce las
+    claves snake_case de metodology["metrics"] a nombres legibles
+    (METRIC_DISPLAY_NAMES) -- la etapa 1 imprimía la clave cruda (ej.
+    "share_of_shelf_pct") como encabezado.
 
 Decisión de librería (2026-09-17, documentada también en CLAUDE.md):
 reportlab, no fpdf2 ni WeasyPrint.
@@ -106,14 +129,45 @@ PAGE_PORTRAIT = letter
 
 CARD_SIDE_PADDING = 16  # pt -- padding lateral de _kpi_stat_card, ver su docstring
 
-RATING_LABELS = {
-    "verde": "Bien",
-    "amarillo": "Atención",
-    "rojo": "Crítico",
-    "no_concluyente": "Datos insuficientes",
-}
-
 DATOS_INSUFICIENTES = "Datos insuficientes"
+
+# Colores de semáforo (secciones 5/6/7, agregado 2026-09-18): DISTINTOS
+# de la paleta de marca violeta de arriba a propósito -- verde/ámbar/rojo
+# comunican un estado (bien/atención/crítico), no identidad de marca, y
+# es el mismo criterio de color que ya usa el dashboard (rose/amber/
+# emerald) para Alertas/Oportunidades/Fortalezas. Tonos "-600" de
+# Tailwind (más oscuros que los "-400" del dashboard, pensado para modo
+# oscuro) para que el texto tenga suficiente contraste sobre fondo
+# blanco de página impresa.
+_STATUS_HEX = {
+    "verde": "#059669",
+    "amarillo": "#D97706",
+    "rojo": "#E11D48",
+}
+_STATUS_COLORS = {key: colors.HexColor(value) for key, value in _STATUS_HEX.items()}
+_STATUS_COLORS["no_concluyente"] = COLOR_CHARCOAL_MUTED
+
+# Alertas/Oportunidades/Fortalezas (sección 7) no son una calificación
+# verde/amarillo/rojo por celda como price_index_rating/position_rating
+# -- son 3 CATEGORÍAS fijas, pero comparten exactamente los mismos 3
+# colores que el dashboard ya usa para ellas (rojo=Alertas,
+# amarillo=Oportunidades, verde=Fortalezas), así que reusan _STATUS_HEX/
+# _STATUS_COLORS en vez de duplicar la paleta.
+_CATEGORIA_STATUS_KEY = {"Alertas": "rojo", "Oportunidades": "amarillo", "Fortalezas": "verde"}
+
+# Nombres legibles para las claves de metodology["metrics"] (snake_case,
+# pensadas para consumo por API/frontend) -- la etapa 1 imprimía la
+# clave cruda (ej. "share_of_shelf_pct") como encabezado en el PDF; la
+# etapa 2 la traduce a un nombre presentable sin tocar el dict de
+# /methodology (que otros consumidores sí esperan en snake_case).
+METRIC_DISPLAY_NAMES = {
+    "share_of_shelf_pct": "Share of Shelf",
+    "price_index": "Índice de Precio",
+    "availability_pct": "Disponibilidad",
+    "dn_pct": "Distribución Numérica (% DN)",
+    "dp_pct": "Distribución Ponderada (% DP)",
+    "pct_promoted": "% Promocionado",
+}
 
 
 def _fmt_pct(v: Optional[float]) -> str:
@@ -206,6 +260,30 @@ def _build_styles():
     styles.add(ParagraphStyle(
         name="LegendLabel", parent=styles["Normal"], fontName="Helvetica",
         fontSize=8.5, textColor=COLOR_CHARCOAL_MUTED,
+    ))
+    styles.add(ParagraphStyle(
+        name="CategoriaTitulo", parent=styles["Normal"], fontName="Helvetica-Bold",
+        fontSize=12.5, leading=16, textColor=COLOR_CHARCOAL, spaceAfter=6,
+    ))
+    styles.add(ParagraphStyle(
+        name="CalloutTexto", parent=styles["Normal"], fontName="Helvetica",
+        fontSize=9.5, leading=13.5, textColor=COLOR_CHARCOAL,
+    ))
+    styles.add(ParagraphStyle(
+        name="MetodologiaSubtitulo", parent=styles["Normal"], fontName="Helvetica-Bold",
+        fontSize=11, leading=14, textColor=COLOR_VIOLET, spaceAfter=8,
+    ))
+    styles.add(ParagraphStyle(
+        name="NotaTexto", parent=styles["Normal"], fontName="Helvetica",
+        fontSize=9.5, leading=14, textColor=COLOR_CHARCOAL,
+    ))
+    styles.add(ParagraphStyle(
+        name="MetricaNombre", parent=styles["Normal"], fontName="Helvetica-Bold",
+        fontSize=10.5, leading=14, textColor=COLOR_VIOLET, spaceBefore=4,
+    ))
+    styles.add(ParagraphStyle(
+        name="MetodologiaTexto", parent=styles["Normal"], fontName="Helvetica",
+        fontSize=9, leading=13, textColor=COLOR_CHARCOAL_MUTED,
     ))
     return styles
 
@@ -323,6 +401,39 @@ def _cita_blockquote(texto: str, styles) -> Table:
         ("TOPPADDING", (0, 0), (-1, -1), 10),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
         ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    return table
+
+
+def _callout_box(texto: str, color, styles) -> Table:
+    """Caja con barra de color a la izquierda -- generaliza el patrón
+    visual de `_cita_blockquote` (específica para la cita editorial en
+    cursiva violeta) para la sección 7 (Conclusiones), donde el color de
+    la barra es el de la categoría (Alertas/Oportunidades/Fortalezas,
+    ver _STATUS_COLORS) en vez de fijo violeta."""
+    table = Table([[Paragraph(texto, styles["CalloutTexto"])]], colWidths=[None])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+        ("LINEBEFORE", (0, 0), (0, -1), 3, color),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    return table
+
+
+def _note_box(texto: str, styles) -> Table:
+    """Caja con fondo lila pálido de página completa -- para el
+    disclaimer de la sección 8 (Metodología), a modo de 'nota'
+    destacada en vez de un párrafo suelto como en la etapa 1."""
+    table = Table([[Paragraph(texto, styles["NotaTexto"])]], colWidths=[None])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), COLOR_LILAC_PALE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
     ]))
     return table
 
@@ -472,6 +583,48 @@ class _ColorLegend(Flowable):
         c.drawString(x2 + sq + 5, y + 1, "Competencia")
 
 
+class _Legend(Flowable):
+    """Leyenda de color genérica -- generaliza `_ColorLegend` (fija a
+    'Cliente'/'Competencia' de la sección 4) para las secciones 5/6, que
+    necesitan leyendas de distinto contenido (semáforo verde/ámbar/rojo,
+    o el marcador de mediana). `items` es una lista de (color, texto,
+    marker) -- marker es "square" (por defecto) o "diamond"."""
+
+    def __init__(self, items: list, width: float, height: float = 14):
+        super().__init__()
+        self.items = items
+        self.width = width
+        self.height = height
+
+    def wrap(self, availWidth, availHeight):
+        return (self.width, self.height)
+
+    def draw(self):
+        c = self.canv
+        sq = 9
+        y = (self.height - sq) / 2
+        x = 0
+        c.setFont("Helvetica", 8.5)
+        for item in self.items:
+            color, label = item[0], item[1]
+            marker = item[2] if len(item) > 2 else "square"
+            c.setFillColor(color)
+            if marker == "diamond":
+                cx, cy, r = x + sq / 2, y + sq / 2, sq / 2
+                p = c.beginPath()
+                p.moveTo(cx, cy + r)
+                p.lineTo(cx + r, cy)
+                p.lineTo(cx, cy - r)
+                p.lineTo(cx - r, cy)
+                p.close()
+                c.drawPath(p, stroke=0, fill=1)
+            else:
+                c.rect(x, y, sq, sq, stroke=0, fill=1)
+            c.setFillColor(COLOR_CHARCOAL_MUTED)
+            c.drawString(x + sq + 5, y + 1, label)
+            x += sq + 5 + c.stringWidth(label, "Helvetica", 8.5) + 16
+
+
 def _retailer_share_rows(by_retailer_dn_dp: list, width: float) -> list:
     """Arma las filas de barra de la sección 4, una por retailer activo,
     ordenadas igual que la tabla de la etapa 1 (por retailer_code) --
@@ -494,70 +647,216 @@ def _retailer_share_rows(by_retailer_dn_dp: list, width: float) -> list:
     return rows
 
 
-def _tabla_indice_precio(por_retailer: list) -> Table:
-    """Sección 5: Índice de Precio por retailer -- marca explícitamente
-    'Datos insuficientes' en vez de inventar un valor donde price_index
-    es None (Rappi por falta de datos comparables, o cualquier retailer
-    forzado a None por price_index_data_quality='partial', ver
-    /methodology). price_index ya excluye CLIENT_BRANDS_PRICE_EXCLUDED
-    (TENA, ver client_brands.py) -- la penúltima columna es informativa:
-    el precio promedio de esas marcas excluidas, sin índice porque no
-    tienen competencia comparable capturada.
+class _PriceIndexBar(Flowable):
+    """Fila de la sección 5 (Índice de Precio): barra horizontal 0..
+    scale_max coloreada por semáforo (price_index_rating) -- reemplaza
+    la tabla verde de la etapa 1, mismo mecanismo de dibujo a mano
+    (roundRect + clipping) que `_RetailerShareBar` en la sección 4, por
+    consistencia visual, aunque el dato en sí no es una proporción de 2
+    partes sino un único valor centrado en 100 (paridad).
 
-    Columna "Mediana" (agregada 2026-09-18, ver price_index_median en
-    insights_engine.py): mismo índice pero calculado con la mediana en
-    vez del promedio -- dato ADICIONAL junto al índice oficial (columna
-    "Índice de Precio"), no lo reemplaza. Investigado con datos reales
-    de producción: coinciden casi exactamente cuando la dispersión de
-    precios de competencia es pareja, pero difieren bastante cuando hay
-    alta dispersión por tamaños de empaque (ver CLAUDE.md para el
-    detalle completo de la investigación, incluyendo por qué se
-    descartó la moda)."""
-    table_data = [["Retailer", "Índice de Precio", "Mediana", "Calificación", "TENA (informativo)"]]
-    for cell in sorted(por_retailer, key=lambda c: c["retailer"]):
+    Dos marcas de referencia sobre la barra: una línea vertical fija en
+    el valor 100 (paridad con el mercado), y un rombo violeta oscuro en
+    price_index_median (agregado 2026-09-18 -- dato ADICIONAL junto al
+    índice oficial, ver la nota completa en insights_engine.py y
+    CLAUDE.md sobre por qué conviven ambas métricas en vez de reemplazar
+    una a la otra)."""
+
+    ROW_H = 46
+    ROW_GAP = 16
+    BAR_H = 12
+
+    def __init__(self, retailer_label: str, price_index: Optional[float],
+                 price_index_median: Optional[float], rating: str,
+                 tena_label: str, scale_max: float, width: float):
+        super().__init__()
+        self.retailer_label = retailer_label
+        self.price_index = price_index
+        self.price_index_median = price_index_median
+        self.rating = rating
+        self.tena_label = tena_label
+        self.scale_max = scale_max
+        self.width = width
+
+    def wrap(self, availWidth, availHeight):
+        return (self.width, self.ROW_H + self.ROW_GAP)
+
+    def draw(self):
+        c = self.canv
+        w = self.width
+        top = self.ROW_GAP + self.ROW_H
+        color = _STATUS_COLORS.get(self.rating, COLOR_CHARCOAL_MUTED)
+
+        c.setFont("Helvetica-Bold", 11)
+        c.setFillColor(COLOR_CHARCOAL)
+        c.drawString(0, top - 12, self.retailer_label)
+
+        c.setFont("Helvetica-Bold", 15)
+        c.setFillColor(color)
+        c.drawRightString(w, top - 14, _fmt_index(self.price_index))
+
+        c.setFont("Helvetica", 8)
+        c.setFillColor(COLOR_CHARCOAL_MUTED)
+        c.drawString(0, top - 24, f"Mediana: {_fmt_index(self.price_index_median)}")
+        c.drawRightString(w, top - 24, self.tena_label)
+
+        bar_y = self.ROW_GAP
+        radius = self.BAR_H / 2
+        c.setFillColor(COLOR_LILAC_LINE)
+        c.roundRect(0, bar_y, w, self.BAR_H, radius, stroke=0, fill=1)
+
+        if self.price_index is not None:
+            value_w = max(0.0, min(w, w * (self.price_index / self.scale_max)))
+            c.saveState()
+            p = c.beginPath()
+            p.roundRect(0, bar_y, w, self.BAR_H, radius)
+            c.clipPath(p, stroke=0, fill=0)
+            c.setFillColor(color)
+            c.rect(0, bar_y, value_w, self.BAR_H, stroke=0, fill=1)
+            c.restoreState()
+
+        ref_x = w * (100.0 / self.scale_max)
+        c.setStrokeColor(COLOR_VIOLET_DARK)
+        c.setLineWidth(1.2)
+        c.line(ref_x, bar_y - 2, ref_x, bar_y + self.BAR_H + 2)
+
+        if self.price_index_median is not None:
+            med_x = max(0.0, min(w, w * (self.price_index_median / self.scale_max)))
+            cy, r = bar_y + self.BAR_H / 2, 4.5
+            c.setFillColor(COLOR_VIOLET_DARK)
+            p2 = c.beginPath()
+            p2.moveTo(med_x, cy + r)
+            p2.lineTo(med_x + r, cy)
+            p2.lineTo(med_x, cy - r)
+            p2.lineTo(med_x - r, cy)
+            p2.close()
+            c.drawPath(p2, stroke=0, fill=1)
+
+
+def _retailer_price_index_rows(por_retailer: list, width: float) -> list:
+    """Arma las filas de barra de la sección 5, una por retailer con
+    price_index_rating calculado -- incluye los que vienen en None
+    (Rappi por falta de precio comparable, o cualquier retailer forzado
+    a None por price_index_data_quality='partial', ver analytics.py):
+    se muestran con la pista vacía y 'Datos insuficientes', no se
+    ocultan.
+
+    scale_max: escala común (0..scale_max) para que todas las barras de
+    la sección sean comparables entre sí -- múltiplo de 50 por encima
+    del mayor valor real presente (price_index O price_index_median,
+    el que sea más alto -- confirmado con datos reales que la mediana
+    puede superar al promedio, ver CLAUDE.md sobre Carulla 118.0 vs.
+    150.0), con un piso de 150 para que la marca de referencia en 100
+    nunca quede pegada al borde derecho de una barra corta. Sin incluir
+    la mediana aquí, su rombo terminaría pegado al borde derecho (o
+    fuera de la pista) cada vez que la mediana superara al promedio --
+    confirmado visualmente con este mismo fixture antes de este ajuste."""
+    cells = sorted(por_retailer, key=lambda c: c["retailer"])
+    real_values = [c["price_index"] for c in cells if c.get("price_index") is not None]
+    real_values += [c["price_index_median"] for c in cells if c.get("price_index_median") is not None]
+    scale_max = max(150.0, 50.0 * (int(max(real_values, default=100) // 50) + 1)) if real_values else 150.0
+
+    rows = []
+    for cell in cells:
         excluded_skus = cell.get("client_price_excluded_skus") or 0
         excluded_price = cell.get("client_price_excluded_avg_price")
-        tena_cell = f"${excluded_price:,.0f} ({excluded_skus} SKUs)" if excluded_skus else "Sin SKUs"
-        table_data.append([
-            cell["retailer"].capitalize(),
-            _fmt_index(cell["price_index"]),
-            _fmt_index(cell.get("price_index_median")),
-            RATING_LABELS.get(cell["price_index_rating"], cell["price_index_rating"]),
-            tena_cell,
-        ])
-    table = Table(table_data, repeatRows=1)
-    table.setStyle(_default_table_style())
-    return table
+        tena_label = (
+            f"TENA: ${excluded_price:,.0f} ({excluded_skus} SKUs)" if excluded_skus else "TENA: sin SKUs"
+        )
+        rows.append(_PriceIndexBar(
+            retailer_label=cell["retailer"].capitalize(),
+            price_index=cell.get("price_index"),
+            price_index_median=cell.get("price_index_median"),
+            rating=cell.get("price_index_rating", "no_concluyente"),
+            tena_label=tena_label,
+            scale_max=scale_max,
+            width=width,
+        ))
+    return rows
 
 
-def _tabla_posicion_dominante(por_retailer: list) -> Table:
-    """Sección 6: % de SKUs del cliente en posición top-3 por retailer
-    (client_top3_pct, agregado en insights_engine.py 2026-09-17) -- en
-    la etapa 2 esto se dibuja como círculos proporcionales; en esta
-    versión de texto es la misma cifra en tabla, junto a la mejor
-    posición individual para dar contexto."""
-    table_data = [["Retailer", "% SKUs en Top-3", "Mejor posición", "Calificación"]]
+class _TopThreeCircle(Flowable):
+    """Fila de la sección 6 (Posición Dominante): dona proporcional con
+    el % de SKUs del cliente en el top-3 (client_top3_pct), coloreada
+    por semáforo (position_rating) -- reemplaza la tabla verde de la
+    etapa 1. Dibujada con canvas.wedge (pie/dona) en vez de una gráfica
+    de reportlab.graphics, mismo criterio que las secciones 4/5: más
+    control de estilo (grosor de anillo, colores exactos) que la
+    gráfica genérica -- el 'agujero' de la dona se logra dibujando un
+    círculo blanco encima del centro (la sección está en la plantilla
+    portrait 'Normal', fondo de página blanco liso, ver
+    generate_executive_pdf)."""
+
+    ROW_H = 50
+    ROW_GAP = 14
+    DIAM = 42
+    RING_W = 7
+
+    def __init__(self, retailer_label: str, top3_pct: Optional[float],
+                 client_best_position: Optional[int], competition_best_position: Optional[int],
+                 rating: str, width: float):
+        super().__init__()
+        self.retailer_label = retailer_label
+        self.top3_pct = top3_pct
+        self.client_best_position = client_best_position
+        self.competition_best_position = competition_best_position
+        self.rating = rating
+        self.width = width
+
+    def wrap(self, availWidth, availHeight):
+        return (self.width, self.ROW_H + self.ROW_GAP)
+
+    def draw(self):
+        c = self.canv
+        color = _STATUS_COLORS.get(self.rating, COLOR_CHARCOAL_MUTED)
+        cy = self.ROW_GAP + self.ROW_H / 2
+        cx = self.DIAM / 2
+        r = self.DIAM / 2
+
+        c.setFillColor(COLOR_LILAC_LINE)
+        c.wedge(cx - r, cy - r, cx + r, cy + r, 0, 360, stroke=0, fill=1)
+        if self.top3_pct is not None and self.top3_pct > 0:
+            extent = -(min(self.top3_pct, 100.0) / 100.0 * 360)
+            c.setFillColor(color)
+            c.wedge(cx - r, cy - r, cx + r, cy + r, 90, extent, stroke=0, fill=1)
+
+        c.setFillColor(colors.white)
+        c.circle(cx, cy, r - self.RING_W, stroke=0, fill=1)
+
+        c.setFont("Helvetica-Bold", 11)
+        c.setFillColor(color if self.top3_pct is not None else COLOR_CHARCOAL_MUTED)
+        label = _fmt_pct(self.top3_pct) if self.top3_pct is not None else "N/D"
+        c.drawCentredString(cx, cy - 4, label)
+
+        text_x = self.DIAM + 16
+        c.setFont("Helvetica-Bold", 11)
+        c.setFillColor(COLOR_CHARCOAL)
+        c.drawString(text_x, cy + 6, self.retailer_label)
+        c.setFont("Helvetica", 8.5)
+        c.setFillColor(COLOR_CHARCOAL_MUTED)
+        meta = (
+            f"Mejor posición cliente: {_fmt_position(self.client_best_position)}   "
+            f"Competencia: {_fmt_position(self.competition_best_position)}"
+        )
+        c.drawString(text_x, cy - 6, meta)
+
+
+def _retailer_top3_rows(por_retailer: list, width: float) -> list:
+    """Arma las filas de dona de la sección 6, una por retailer con
+    position_rating calculado -- client_top3_pct puede ser None (cliente
+    sin presencia en la celda) sin ocultar la fila, mismo criterio que
+    el resto de las secciones."""
+    rows = []
     for cell in sorted(por_retailer, key=lambda c: c["retailer"]):
-        table_data.append([
-            cell["retailer"].capitalize(),
-            _fmt_pct(cell.get("client_top3_pct")),
-            _fmt_position(cell["client_best_position"]),
-            RATING_LABELS.get(cell["position_rating"], cell["position_rating"]),
-        ])
-    table = Table(table_data, repeatRows=1)
-    table.setStyle(_default_table_style())
-    return table
-
-
-def _default_table_style() -> TableStyle:
-    return TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a6b3c")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f2f2")]),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ])
+        rows.append(_TopThreeCircle(
+            retailer_label=cell["retailer"].capitalize(),
+            top3_pct=cell.get("client_top3_pct"),
+            client_best_position=cell.get("client_best_position"),
+            competition_best_position=cell.get("competition_best_position"),
+            rating=cell.get("position_rating", "no_concluyente"),
+            width=width,
+        ))
+    return rows
 
 
 def generate_executive_pdf(
@@ -681,44 +980,72 @@ def generate_executive_pdf(
     story.append(PageBreak())
 
     # --- 5. Índice de Precio por retailer ---
-    story.append(Paragraph("Índice de Precio por Retailer", styles["SeccionTitulo"]))
-    story.append(_tabla_indice_precio(por_retailer))
+    story.append(Paragraph("Índice de Precio por Retailer", styles["SeccionTituloBrand"]))
+    story.append(_Legend([
+        (_STATUS_COLORS["verde"], "Bien (95-105)"),
+        (_STATUS_COLORS["amarillo"], "Atención (80-95 / 105-120)"),
+        (_STATUS_COLORS["rojo"], "Crítico (<80 / >120)"),
+        (COLOR_VIOLET_DARK, "Mediana (dato adicional)", "diamond"),
+    ], width=content_width_normal))
+    story.append(Spacer(1, 0.15 * cm))
+    story.append(Paragraph(
+        "La línea vertical marca 100 (paridad de precio con la competencia).",
+        styles["LegendLabel"],
+    ))
+    story.append(Spacer(1, 0.25 * cm))
+    story.extend(_retailer_price_index_rows(por_retailer, width=content_width_normal))
     story.append(PageBreak())
 
     # --- 6. Posición dominante por retailer (% top-3) ---
-    story.append(Paragraph("Posición Dominante por Retailer", styles["SeccionTitulo"]))
-    story.append(_tabla_posicion_dominante(por_retailer))
+    story.append(Paragraph("Posición Dominante por Retailer", styles["SeccionTituloBrand"]))
+    story.append(Paragraph(
+        "% de SKUs del cliente en el top-3 de resultados de búsqueda, por retailer.",
+        styles["LegendLabel"],
+    ))
+    story.append(Spacer(1, 0.25 * cm))
+    story.extend(_retailer_top3_rows(por_retailer, width=content_width_normal))
     story.append(PageBreak())
 
     # --- 7. Conclusiones clave ---
-    story.append(Paragraph("Conclusiones Clave", styles["SeccionTitulo"]))
+    story.append(Paragraph("Conclusiones Clave", styles["SeccionTituloBrand"]))
+    story.append(Paragraph(
+        "Los hallazgos más relevantes de cada categoría en el período, con el número real que los sustenta.",
+        styles["LegendLabel"],
+    ))
+    story.append(Spacer(1, 0.3 * cm))
     for titulo, lista in (
         ("Alertas", insights.get("alertas", [])),
         ("Oportunidades", insights.get("oportunidades", [])),
         ("Fortalezas", insights.get("fortalezas", [])),
     ):
-        story.append(Paragraph(titulo, styles["Heading3"]))
+        status_key = _CATEGORIA_STATUS_KEY[titulo]
+        story.append(Paragraph(
+            f'<font color="{_STATUS_HEX[status_key]}">&#9679;</font> {titulo}', styles["CategoriaTitulo"]
+        ))
         if not lista:
-            story.append(Paragraph("Sin elementos en esta categoría en el período.", styles["Normal"]))
-        for item in lista[:3]:
-            story.append(Paragraph(f"&bull; {item['mensaje_especifico']}", styles["Normal"]))
+            story.append(Paragraph("Sin elementos en esta categoría en el período.", styles["LegendLabel"]))
+        else:
+            for item in lista[:3]:
+                story.append(_callout_box(item["mensaje_especifico"], _STATUS_COLORS[status_key], styles))
+                story.append(Spacer(1, 0.15 * cm))
         story.append(Spacer(1, 0.3 * cm))
     story.append(PageBreak())
 
     # --- 8. Metodología ---
-    story.append(Paragraph("Metodología", styles["SeccionTitulo"]))
-    story.append(Paragraph(methodology.get("audit_type", ""), styles["Heading3"]))
-    story.append(Paragraph(methodology.get("disclaimer", ""), styles["Normal"]))
-    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph("Metodología", styles["SeccionTituloBrand"]))
+    story.append(Paragraph(methodology.get("audit_type", ""), styles["MetodologiaSubtitulo"]))
+    story.append(_note_box(methodology.get("disclaimer", ""), styles))
+    story.append(Spacer(1, 0.35 * cm))
     for metric_key, metric_text in methodology.get("metrics", {}).items():
-        story.append(Paragraph(metric_key, styles["Heading3"]))
-        story.append(Paragraph(metric_text, styles["Normal"]))
-        story.append(Spacer(1, 0.2 * cm))
+        story.append(Paragraph(METRIC_DISPLAY_NAMES.get(metric_key, metric_key), styles["MetricaNombre"]))
+        story.append(Paragraph(metric_text, styles["MetodologiaTexto"]))
+        story.append(Spacer(1, 0.18 * cm))
     caveats = methodology.get("known_data_quality_caveats", [])
     if caveats:
-        story.append(Paragraph("Limitaciones de datos conocidas", styles["Heading3"]))
+        story.append(Spacer(1, 0.15 * cm))
+        story.append(Paragraph("Limitaciones de datos conocidas", styles["MetricaNombre"]))
         for caveat in caveats:
-            story.append(Paragraph(f"&bull; {caveat}", styles["Normal"]))
+            story.append(Paragraph(f"&bull; {caveat}", styles["MetodologiaTexto"]))
 
     doc.build(story)
     return buffer.getvalue()
