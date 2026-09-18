@@ -483,17 +483,30 @@ editorial (sección 3) se movió a la misma página horizontal del resumen
 como blockquote en vez de tener su propio salto de página, para que la
 columna izquierda cuente una sola historia (prosa + cita) junto a la
 tarjeta violeta de KPIs (Share of Shelf + DN/DP/Disponibilidad) de la
-columna derecha. Verificado localmente generando el PDF con datos de
-prueba representativos (formas reales de los dicts de
-`/executive-summary`, `/insights`, `/methodology`) y renderizando las
-páginas a imagen para revisión visual -- no se pudo probar contra datos
-reales de staging porque no hay `DATABASE_URL` configurada en el entorno
-local; falta verificar visualmente contra la URL de staging desplegada
-(ver "REGLA DE ORO" arriba) antes de mergear a `main`. Un primer intento
-de la tarjeta de KPIs tenía las etiquetas ("SHARE OF SHELF", "DN/DP/
-Disponib.") en lila oscuro sobre fondo violeta -- casi ilegible por poco
-contraste, corregido usando el lila claro (`#D9C9EC`) para esas
-etiquetas antes de subir nada.
+columna derecha. Verificado primero localmente (no hay `DATABASE_URL`
+en el entorno local) generando el PDF con datos de prueba
+representativos y renderizando páginas a imagen, y LUEGO contra la URL
+real de staging desplegada (`/reports/executive-pdf`, ver "REGLA DE
+ORO" arriba) con datos reales de producción-de-pruebas -- ambos pasos
+hechos antes de considerar el trabajo terminado, ninguno reemplaza al
+otro. Un primer intento de la tarjeta de KPIs tenía las etiquetas
+("SHARE OF SHELF", "DN/DP/Disponib.") en lila oscuro sobre fondo
+violeta -- casi ilegible por poco contraste, corregido usando el lila
+claro (`#D9C9EC`) antes de subir nada.
+
+**Bug real encontrado y corregido contra staging (2026-09-17)**: la
+tabla de KPIs (DN/DP/Disponibilidad) anidada dentro de la tarjeta
+violeta (`_kpi_stat_card` en `pdf_report.py`) se dimensionaba con el
+ancho TOTAL de la tarjeta sin descontar su padding lateral
+(`CARD_SIDE_PADDING`) -- invisible con datos de prueba inventados a
+mano, pero con datos reales de staging (`availability_pct=100.0`) el
+texto "100.0%" se salía físicamente del borde derecho de la tarjeta
+violeta. Solo se detectó porque la verificación contra staging se hizo
+con datos reales, no con el mock local -- confirma la razón de tener
+ambos pasos de verificación, no solo el local. Corregido restando
+`CARD_SIDE_PADDING*2` antes de repartir el ancho entre las 3 columnas;
+re-verificado contra staging con el mismo dato real (100.0%) para
+confirmar.
 
 **Pendiente (etapa 2, resto del documento)**: secciones 4/5/6 siguen en
 texto/tabla plano de la etapa 1 (sin gráficas nativas de
